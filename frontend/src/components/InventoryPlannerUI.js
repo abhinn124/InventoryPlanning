@@ -17,7 +17,7 @@ const InventoryPlannerUI = () => {
 
   const handleUpload = async () => {
     if (!file) return;
-  
+
     setLoading(true);
     try {
       const data = await uploadFile(file);
@@ -29,7 +29,7 @@ const InventoryPlannerUI = () => {
       setLoading(false);
     }
   };
-  
+
   return (
     <div className="flex flex-col items-center justify-center p-12 space-y-8 bg-gray-50 min-h-screen font-raleway text-gray-900 text-center">
       <h1 className="text-4xl font-bold">Inventory Planner</h1>
@@ -43,7 +43,7 @@ const InventoryPlannerUI = () => {
           <input
             type="file"
             accept=".xlsx, .csv"
-            onChange={handleFileChange}
+            onChange={(event) => setFile(event.target.files[0])}
             className="border p-3 rounded-lg w-full mb-4 text-center"
           />
           <Button
@@ -69,32 +69,34 @@ const InventoryPlannerUI = () => {
         )}
       </AnimatePresence>
 
-      {result && (
+      {result && result.classification && (
         <Card className="w-full max-w-2xl p-6 shadow-lg rounded-xl text-left result-text">
           <CardHeader>
             <CardTitle className="text-2xl">Result Overview</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex items-center gap-4 text-lg">
-              {result.is_inventory_planning ? (
+              {result.classification.is_inventory_planning ? (
                 <CheckCircle className="text-green-500 h-6 w-6" />
               ) : (
                 <XCircle className="text-red-500 h-6 w-6" />
               )}
               <span className="font-semibold">Inventory Planning File:</span>
-              <span>{result.is_inventory_planning ? "Yes" : "No"}</span>
+              <span>{result.classification.is_inventory_planning ? "Yes" : "No"}</span>
             </div>
 
             <div>
               <span className="font-semibold">Confidence:</span>
-              <Progress value={result.confidence * 100} className="mt-2" />
-              <span className="text-lg text-gray-700 font-semibold">{(result.confidence * 100).toFixed(1)}%</span>
+              <Progress value={result.classification.confidence * 100} className="mt-2" />
+              <span className="text-lg text-gray-700 font-semibold">
+                {(result.classification.confidence * 100).toFixed(1)}%
+              </span>
             </div>
 
             <div>
               <span className="font-semibold">Justification:</span>
               <ul className="mt-3 text-base list-disc list-inside space-y-1">
-                {result.justification
+                {result.classification.justification
                   .split(". ")
                   .filter(Boolean)
                   .map((reason, idx) => (

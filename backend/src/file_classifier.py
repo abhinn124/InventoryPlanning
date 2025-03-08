@@ -1,16 +1,45 @@
 import pandas as pd
 import warnings
+from fuzzywuzzy import fuzz
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+# Mapping for expected sheets into categories
+SHEET_MAPPINGS = {
+    "inventory_on_hand": ["inventory snapshot", "stock summary", "on-hand inventory", "current stock"],
+    "sales_history": ["sales data", "revenue report", "orders", "sales records", "depletions", "sales"],
+    "purchase_orders": ["purchase orders", "po summary", "incoming stock", "replen orders"],
+    "item_master": ["item master", "product catalog", "product details", "sku list"]
+}
+
+# Define expected column variations
+COLUMN_MAPPINGS = {
+    "sku": ["sku", "product code", "item id", "stock keeping unit"],
+    "quantity": ["quantity", "qty", "stock count", "inventory level"],
+    "location": ["location", "warehouse", "store"],
+    "purchase_order_id": ["purchase order id", "po id", "order number"],
+    "arrival_date": ["arrival date", "expected delivery", "eta"],
+    "cost": ["cost", "unit cost", "purchase price"],
+    "order_date": ["order date", "order placed"],
+    "vendor": ["vendor", "supplier", "manufacturer"],
+    "revenue": ["revenue", "sales value", "total sales"],
+    "channel": ["channel", "sales channel", "platform"]
+}
+
+def fuzzy_match(target, candidates, threshold=80):
+    """ Match a target string against a list of candidates using fuzzy matching. """
+    for candidate in candidates:
+        if fuzz.partial_ratio(target.lower(), candidate.lower()) >= threshold:
+            return True
+    return False
 
 def classify_file(file):
     """
     Takes the uploaded file and performs:
-      - Basic checks if it's an Excel file
-      - Attempts to parse for 'inventory planning' signals
-      - Returns { 'is_inventory_planning': bool, 'confidence': float, 'justification': str }
+      - Sheet recognition (stronger signals)
+      - Column classification (more precise mapping)
+      - Revised confidence scoring
     """
-    # Attempt to parse the Excel file
     try:
         xl = pd.ExcelFile(file)
         sheets = xl.sheet_names
@@ -23,33 +52,41 @@ def classify_file(file):
 
     signals = 0
     justification_parts = []
+    detected_categories = {key: False for key in SHEET_MAPPINGS.keys()}
 
-    # Check each sheet in the workbook
+    # Sheet recognition - Stronger weighting
     for sheet in sheets:
-        df = xl.parse(sheet)
+        for category, variations in SHEET_MAPPINGS.items():
+            if fuzzy_match(sheet, variations):
+                detected_categories[category] = True
+                justification_parts.append(f'Sheet "{sheet}" identified as "{category}".')
 
-        # Convert column names to strings and lowercase them
-        columns_lower = [str(c).lower() for c in df.columns]
+    # Column recognition - Check required fields
+    column_signals = 0
+    for sheet in sheets:
+        try:
+            df = xl.parse(sheet, nrows=5)  # Read only the first few rows to speed up processing
+            columns_lower = [str(c).lower() for c in df.columns]
 
-        # Look for typical inventory-planning columns
-        if any('sku' in c for c in columns_lower):
-            signals += 1
-            justification_parts.append(f'Sheet "{sheet}" has a column containing "SKU".')
-        if any('quantity' in c for c in columns_lower):
-            signals += 1
-            justification_parts.append(f'Sheet "{sheet}" has a column containing "Quantity".')
-        if 'purchase order id' in columns_lower:
-            signals += 1
-            justification_parts.append(f'Sheet "{sheet}" references "Purchase Order ID".')
+            matched_columns = 0
+            for field, variations in COLUMN_MAPPINGS.items():
+                if any(fuzzy_match(col, variations) for col in columns_lower):
+                    matched_columns += 1
+            
+            if matched_columns >= 2:  # Require at least two key fields to count
+                column_signals += 1
+                justification_parts.append(f'Sheet "{sheet}" contains multiple key fields.')
 
-    # Compute a simplistic confidence metric (for demo purposes)
-    confidence = float(signals) / (len(sheets) + 1)
+        except Exception as e:
+            justification_parts.append(f'Error reading sheet "{sheet}": {str(e)}')
 
-    # Decide if it's an inventory planning file based on our threshold
-    is_inventory_planning = confidence > 0.4
+    # Improved Confidence Scoring
+    detected_categories_count = sum(detected_categories.values())
+    confidence = (column_signals * 1.5 + detected_categories_count * 3) / (len(sheets) + 3)
 
-    # Construct a justification string
-    justification = ' '.join(justification_parts) if justification_parts else 'No typical columns found.'
+    is_inventory_planning = confidence > 0.5  # Adjust threshold as needed
+
+    justification = ' '.join(justification_parts) if justification_parts else 'No significant matches found.'
 
     return {
         'is_inventory_planning': is_inventory_planning,

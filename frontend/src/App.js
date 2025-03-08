@@ -1,11 +1,11 @@
 import React from 'react';
-import FileUpload from './components/FileUpload';
+import InventoryPlannerUI from './components/InventoryPlannerUI';
 
 function App() {
   return (
     <div>
       <h1>Inventory Planning Checker</h1>
-      <FileUpload />
+      <InventoryPlannerUI />
     </div>
   );
 }

@@ -28,12 +28,14 @@ SHEET_CATEGORIES = {
 }
 
 def fuzzy_match(target, candidates, threshold=85):
+    """ Match a target string against a list of candidates using fuzzy matching. """
     for candidate in candidates:
         if fuzz.partial_ratio(target.lower(), candidate.lower()) >= threshold:
             return candidate
     return None
 
 def ensure_unique_columns(columns):
+    """ Ensures all column names are unique, handling unnamed columns properly. """
     seen = {}
     unique_columns = []
     for idx, col in enumerate(columns):
@@ -49,6 +51,7 @@ def ensure_unique_columns(columns):
     return unique_columns
 
 def extract_data(file):
+    """ Extracts structured data from the workbook while filtering out invalid rows. """
     try:
         xl = pd.ExcelFile(file)
     except Exception as e:
@@ -93,18 +96,37 @@ def extract_data(file):
 
             extracted_rows = df[list(field_map.keys())].rename(columns=field_map)
 
+            # Remove header rows mistakenly extracted as data
+            for field in ["sku", "quantity", "time_period"]:
+                if field in extracted_rows.columns:
+                    extracted_rows = extracted_rows[
+                        ~extracted_rows[field].astype(str).str.lower().isin(FIELD_MAPPINGS[field])
+                    ]
+
+            # Convert numeric fields explicitly
+            numeric_fields = ["quantity", "revenue", "cost", "price"]
+            for field in numeric_fields:
+                if field in extracted_rows.columns:
+                    extracted_rows[field] = pd.to_numeric(extracted_rows[field], errors='coerce')
+
+            # Convert dates properly with an explicit format
+            date_fields = ["time_period", "order_date", "arrival_date"]
+            for field in date_fields:
+                if field in extracted_rows.columns:
+                    extracted_rows[field] = pd.to_datetime(
+                        extracted_rows[field], format="%Y-%m-%d", errors='coerce'
+                    )
+
             # Drop rows with all NaNs
             extracted_rows.dropna(how='all', inplace=True)
 
-            # Keep rows with at least half non-NaN values
+            # Keep only rows with at least half valid values
             threshold = len(extracted_rows.columns) // 2
             extracted_rows = extracted_rows.dropna(thresh=threshold)
 
-            # Convert to clean records
+            # Convert cleaned records
             records = extracted_rows.to_dict(orient="records")
-            clean_records = [
-                {k: v for k, v in record.items() if pd.notna(v)} for record in records
-            ]
+            clean_records = [{k: v for k, v in record.items() if pd.notna(v)} for record in records]
 
             if clean_records:
                 extracted_data[sheet_category].extend(clean_records)

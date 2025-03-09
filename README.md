@@ -1,204 +1,145 @@
 # Inventory Planning Checker
 
-A demo application for verifying whether an uploaded spreadsheet is an “Inventory Planning” workbook. The goal of this tool is to reduce manual time spent by the sales engineering team on checking and classifying spreadsheets, ultimately speeding up client onboarding for an Inventory Planning system.
+A powerful tool for verifying and structuring Inventory Planning workbooks. This tool automates the **classification** and **data extraction** process, significantly reducing manual effort for sales engineering teams.  
 
 ---
 
 ## Table of Contents
 1. [Description](#description)
-2. [Data Flow Diagram](#data-flow-diagram)
-3. [Technologies Used](#technologies-used)
-4. [Project Structure](#project-structure)
-5. [Setting Up the Project](#setting-up-the-project)
-6. [Running the Project](#running-the-project)
-7. [How It Works (Under the Hood)](#how-it-works-under-the-hood)
+2. [Enhancements and Fixes](#enhancements-and-fixes)
+3. [How It Works](#how-it-works)
+4. [Technologies Used](#technologies-used)
+5. [Project Structure](#project-structure)
+6. [Setup and Installation](#setup-and-installation)
+7. [Running the Project](#running-the-project)
 8. [Potential Future Improvements](#potential-future-improvements)
 
 ---
 
 ## Description
 
-Many companies have Excel-based or Google Sheets-based “Inventory Planning” workbooks containing:
-- Inventory on Hand
-- Sales History
-- Purchase Orders
-- Item Master data
-
-Currently, a sales engineer must spend days verifying whether a client’s workbook is the correct format. This project automates the first step—_validating whether a file is likely an “Inventory Planning” workbook_—using Python for backend data parsing/classification, and a React frontend for file uploads and result display.
-
-**Key Features**:
-- Simple **React** UI for file upload
-- **Python** backend (Flask) for:
-  - Reading Excel/CSV files
-  - Checking for relevant sheets and columns
-  - Scoring how likely the workbook is an “Inventory Planning” file
-  - Generating a justification message
-- Real-time display of classification results (confidence score + reasoning)
+This tool automatically determines if an uploaded workbook is an **Inventory Planning file** and extracts structured data. It eliminates the need for manual validation by:
+- **Detecting key sheets** (e.g., Inventory, Sales, Purchase Orders).
+- **Identifying important columns** (`SKU`, `Quantity`, `Vendor`, etc.).
+- **Providing structured data tables** for easy review.
 
 ---
 
-## Data Flow Diagram
-
-```
-┌───────────────┐                      (1) File Upload                      ┌───────────────────────┐
-│               │ ------------------>  │                       │
-│  User (UI)    │                      │ React Frontend (App) │
-│ (Web Browser) │ <------------------  │                       │
-└───────────────┘                      (4) JSON Result                      └───────────┬───────────┘
-                                                │ (2) POST
-                                                ▼
-                                   ┌─────────────────────────┐
-                                   │ Flask / Python API      │
-                                   │ (Classification Logic)  │
-                                   └─────────────────────────┘
-                                                ▲
-                                                │ (3) Returns JSON
-```
-
-1. The user uploads a file via React UI.
-2. The React app sends a **POST** request containing the file to the backend.
-3. The backend classifies the file and returns a JSON response.
-4. The frontend displays results (confidence & justification).
+## **Enhancements and Fixes**
+This version includes **major improvements**:
+- ✅ **More accurate classification** of Inventory Planning workbooks.
+- ✅ **Improved fuzzy matching** to avoid false positives.
+- ✅ **Better extraction logic** with:
+  - **Strict column uniqueness enforcement** (fixing duplicate warnings).
+  - **Header row detection and removal** (preventing misclassified data).
+  - **Data type validation** (ensuring correct date and numeric parsing).
+- ✅ **Fully redesigned UI**:
+  - Interactive tables for extracted data.
+  - Improved result visualization.
 
 ---
 
-## Technologies Used
+## 🔍 **How It Works**
+### **Classification Process**
+1. **File Upload**: User selects an Excel workbook and uploads it.
+2. **Workbook Analysis**:
+   - Identifies key **sheets** (e.g., `Inventory On Hand`, `Sales History`).
+   - Checks for relevant **columns** (e.g., `SKU`, `Quantity`, `Vendor`).
+   - Assigns a **confidence score** based on detected data.
+3. **Results Display**:
+   - Confidence % shown in UI.
+   - Justification message explaining the classification decision.
 
-- **Frontend**:
-  - React
-  - Axios or Fetch API
-- **Backend**:
-  - Python 3
-  - Flask
-  - Pandas
-  - openpyxl
-- **Other**:
-  - Git
-  - Node.js + npm
+### **Data Extraction**
+The tool extracts structured data into:
+
+| **Category**        | **Extracted Fields** |
+|---------------------|----------------------|
+| **Inventory on Hand** | SKU, Quantity, Location |
+| **Sales History**   | SKU, Time period, Quantity, Revenue, Channel |
+| **Purchase Orders** | PO ID, SKU, Quantity, Arrival Date, Vendor, Cost |
+| **Item Master**     | SKU, Product Category, Vendor, Price |
+
+These are displayed as **interactive tables** in the UI.
 
 ---
 
-## Project Structure
+## 🛠️ **Technologies Used**
+### **Frontend**:
+- **React**
+- TailwindCSS (for styling)
+- Axios (for API requests)
 
+### **Backend**:
+- **Python + Flask**
+- **Pandas + openpyxl** (for Excel processing)
+- **FuzzyWuzzy** (for smart column matching)
+
+---
+
+## 📁 **Project Structure**
 ```
 inventory-planning-checker/
 ├── backend/
 │   ├── app.py
+│   ├── src/
+│   │   ├── extract_data.py  <-- Improved Extraction Logic
+│   │   ├── file_classifier.py  <-- Improved Classification
 │   ├── requirements.txt
-│   └── src/
-│       ├── __init__.py
-│       └── file_classifier.py
 ├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── InventoryPlannerUI.js  <-- Improved UI with data tables
+│   │   ├── services/api.js
 │   ├── package.json
-│   ├── public/
-│   │   └── index.html
-│   └── src/
-│       ├── App.js
-│       ├── index.js
-│       ├── components/
-│       │   └── FileUpload.js
-│       └── services/
-│           └── api.js
-├── .gitignore
 ├── README.md
-└── LICENSE
+└── .gitignore
 ```
 
 ---
 
-## Setting Up the Project
-
-### 1. Clone the Repository
-
+## 🚀 **Setup and Installation**
+### 1️⃣ **Clone the Repository**
 ```bash
 git clone https://github.com/your-username/inventory-planning-checker.git
 cd inventory-planning-checker
 ```
 
-### 2. Backend Setup
-
-Create and activate a virtual environment:
-
+### 2️⃣ **Backend Setup**
 ```bash
 cd backend
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-Install Python dependencies:
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 3. Frontend Setup
-
-Install Node dependencies:
-
+### 3️⃣ **Frontend Setup**
 ```bash
 cd ../frontend
 npm install
 ```
 
-*(Optional)* Add proxy in `package.json`:
-```json
-"proxy": "http://localhost:5000"
-```
-
 ---
 
-## Running the Project
-
-### Backend
+## ▶️ **Running the Project**
+### **Start the Backend**
 ```bash
 cd backend
 source venv/bin/activate
 python app.py
 ```
+The backend runs at [http://localhost:5000](http://localhost:5000).
 
-Backend runs at `http://localhost:5000`.
-
-### Frontend
-
+### **Start the Frontend**
 ```bash
 cd ../frontend
 npm start
 ```
-
-Frontend runs at `http://localhost:3000`. Open this in your browser.
-
----
-
-## How It Works (Under the Hood)
-
-- User selects a file (Excel/CSV) using React UI (`FileUpload.js`).
-- React sends POST request (`/api/upload`) to Flask backend.
-- Python backend (`file_classifier.py`) reads workbook (via Pandas/openpyxl):
-  - Checks for common sheets (e.g., Inventory, Purchase Orders).
-  - Searches for columns like "SKU", "Quantity", "Purchase Order ID".
-- Computes a confidence score based on detected signals.
-- Backend responds with JSON:
-
-```json
-{
-  "is_inventory_planning": true,
-  "confidence": 0.8,
-  "justification": "Sheet 'InventoryOnHand' has column SKU. Sheet 'PurchaseOrders' references Purchase Order."
-}
-```
-
-Results appear immediately in UI.
+The UI runs at [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Potential Future Improvements
-
-- **Advanced Classification**: Use NLP or ML for flexible column/sheet matching.
-- **Multiple File Types**: CSV, Google Sheets integration.
-- **Improved Error Handling**: Clearer error messages.
-- **Role-Based Access**: Authentication for tracking uploads.
-- **Deployment**: Dockerize the app, Gunicorn/Nginx setup.
-
----
-
-Enjoy your streamlined Inventory Planning verification process! Adapt the logic as needed to make the tool even more robust.
+## 🌟 **Potential Future Improvements**
+- **Machine Learning** for smarter classification.
+- **Error Reporting System** for UI/Backend failures.
+- **Google Sheets Integration** to support cloud workbooks.

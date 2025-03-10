@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/Card";
 import { Progress } from "./ui/Progress";
 import { Button } from "./ui/Button";
-import { UploadCloud, CheckCircle, XCircle, ArrowDownUp, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
+import { UploadCloud, CheckCircle, XCircle, ArrowDownUp, ChevronDown, ChevronUp, BarChart2, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { uploadFile } from "../services/api";
 import DataVisualizations from "./DataVisualizations"; 
@@ -13,6 +13,7 @@ const InventoryPlannerUI = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [errorDetails, setErrorDetails] = useState(null);
   const [expandedJustification, setExpandedJustification] = useState(false);
   const [sortConfig, setSortConfig] = useState({});
   const [expandedMetrics, setExpandedMetrics] = useState({});
@@ -26,12 +27,49 @@ const InventoryPlannerUI = () => {
 
     setLoading(true);
     setError(null);
+    setErrorDetails(null);
+    
     try {
       const data = await uploadFile(file);
-      setResult(data);
+      
+      // Check for error info in the response
+      if (data.error) {
+        setError(data.error);
+        setErrorDetails({
+          type: data.error_type || 'unknown',
+          suggestions: data.suggestions || [],
+          details: data.details || {}
+        });
+        
+        // For partial success cases, still show available data
+        if (data.classification) {
+          setResult(data);
+        } else {
+          setResult(null);
+        }
+      } else {
+        setResult(data);
+      }
     } catch (error) {
       console.error("Error during file upload:", error);
-      setError("Failed to process file. Please try again.");
+      // Try to parse the error response
+      let errorMessage = "Failed to process file. Please try again.";
+      let errorType = "unknown";
+      let suggestions = [];
+      
+      if (error.response && error.response.data) {
+        const responseData = error.response.data;
+        errorMessage = responseData.error || errorMessage;
+        errorType = responseData.error_type || errorType;
+        suggestions = responseData.suggestions || suggestions;
+      }
+      
+      setError(errorMessage);
+      setErrorDetails({
+        type: errorType,
+        suggestions: suggestions,
+        details: {}
+      });
       setResult(null);
     } finally {
       setLoading(false);
@@ -145,6 +183,77 @@ const InventoryPlannerUI = () => {
     }));
   };
 
+  // Error Display Component
+  const ErrorDisplay = ({ error, details }) => {
+    if (!error) return null;
+    
+    // Different styling based on error type
+    const getErrorIcon = (type) => {
+      switch(type) {
+        case 'file_too_large':
+        case 'invalid_file_type':
+        case 'missing_file':
+          return <AlertTriangle className="h-5 w-5 text-amber-500" />;
+        case 'extraction_error':
+        case 'file_read_error':
+          return <Info className="h-5 w-5 text-blue-500" />;
+        default:
+          return <AlertCircle className="h-5 w-5 text-red-500" />;
+      }
+    };
+    
+    const getErrorColor = (type) => {
+      switch(type) {
+        case 'file_too_large':
+        case 'invalid_file_type':
+        case 'missing_file':
+          return 'bg-amber-50 border-amber-200 text-amber-800';
+        case 'extraction_error':
+        case 'file_read_error':
+          return 'bg-blue-50 border-blue-200 text-blue-800';
+        default:
+          return 'bg-red-50 border-red-200 text-red-800';
+      }
+    };
+    
+    return (
+      <div className={`mt-4 p-4 rounded-lg border ${getErrorColor(details?.type)}`}>
+        <div className="flex items-start">
+          <div className="flex-shrink-0 mt-0.5">
+            {getErrorIcon(details?.type)}
+          </div>
+          <div className="ml-3">
+            <h3 className="text-lg font-medium">{error}</h3>
+            
+            {details?.suggestions && details.suggestions.length > 0 && (
+              <div className="mt-2">
+                <h4 className="text-sm font-medium">Suggestions:</h4>
+                <ul className="mt-1 list-disc list-inside text-sm">
+                  {details.suggestions.map((suggestion, idx) => (
+                    <li key={idx}>{suggestion}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            
+            {details?.details && Object.keys(details.details).length > 0 && (
+              <div className="mt-2">
+                <h4 className="text-sm font-medium">Details:</h4>
+                <ul className="mt-1 text-sm">
+                  {Object.entries(details.details).map(([key, value], idx) => (
+                    <li key={idx}>
+                      <span className="font-medium">{key}:</span> {value}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col items-center justify-center p-12 space-y-8 bg-gray-50 min-h-screen text-gray-900">
       <h1 className="text-4xl font-bold">Inventory Planner</h1>
@@ -183,9 +292,7 @@ const InventoryPlannerUI = () => {
         )}
       </AnimatePresence>
 
-      {error && (
-        <div className="text-red-500 text-lg font-semibold mt-4">{error}</div>
-      )}
+      {error && <ErrorDisplay error={error} details={errorDetails} />}
 
       {result && result.classification && (
         <>

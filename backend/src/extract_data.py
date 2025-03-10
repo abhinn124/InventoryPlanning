@@ -2,42 +2,11 @@ import pandas as pd
 import numpy as np
 import warnings
 import re
-import pickle
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from fuzzywuzzy import fuzz, process
 from collections import defaultdict
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-
-# Path to store learned date patterns
-LEARNED_PATTERNS_PATH = os.path.join(os.path.dirname(__file__), 'learned_date_patterns.pkl')
-
-# Load learned patterns if available
-def load_learned_patterns():
-    if os.path.exists(LEARNED_PATTERNS_PATH):
-        try:
-            with open(LEARNED_PATTERNS_PATH, 'rb') as f:
-                return pickle.load(f)
-        except:
-            pass
-    return []
-
-# Save new patterns
-def save_learned_pattern(pattern, format_string):
-    patterns = load_learned_patterns()
-    # Check if pattern already exists
-    if not any(p.get('pattern') == pattern for p in patterns):
-        patterns.append({
-            'pattern': pattern,
-            'format': format_string,
-            'learned': True
-        })
-        try:
-            with open(LEARNED_PATTERNS_PATH, 'wb') as f:
-                pickle.dump(patterns, f)
-        except:
-            pass  # Fail silently if cannot save
 
 # Sheet mappings for classifying sheets into categories
 SHEET_MAPPINGS = {
@@ -74,7 +43,7 @@ SHEET_MAPPINGS = {
         "sales_history": [
             "sku sales data", "category sales", "watches sales", "jewelry sales", 
             "eyewear sales", "straps sales", "orders shipped", "wow sales projections",
-            "sales by channel", "returns"
+            "sales by channel", "returns", "holiday sales", "sales check"
         ],
         "purchase_orders": [
             "order sheet", "os receivings report", "inbound receipts", "wip", "arrivals", 
@@ -83,7 +52,7 @@ SHEET_MAPPINGS = {
         "item_master": [
             "product", "product data", "watches master", "jewelry master", "product master", 
             "product category", "sku master", "product catalog", "item attribute", "carry master",
-            "eyewear master"
+            "eyewear master", "product (archived)"
         ]
     },
     
@@ -91,7 +60,8 @@ SHEET_MAPPINGS = {
     "food_cpg": {
         "inventory_on_hand": [
             "inventory snapshot", "inventory detail", "dot inventory", "current inventory",
-            "warehouse stock", "comarco stock", "lineage", "inventory monthly", "owned inventory"
+            "warehouse stock", "comarco stock", "lineage", "inventory monthly", "owned inventory",
+            "detail2-the mozz", "detail-the mozz"
         ],
         "sales_history": [
             "delivery by month", "delivery by customer", "production and delivery",
@@ -99,7 +69,7 @@ SHEET_MAPPINGS = {
         ],
         "purchase_orders": [
             "production by month", "production", "true up template", "invoice tracker",
-            "supplier orders", "manufacturing plan", "production schedule"
+            "supplier orders", "manufacturing plan", "production schedule", "true up summary"
         ],
         "item_master": [
             "item list", "product codes", "sku detail", "products", "product description",
@@ -115,7 +85,8 @@ SHEET_MAPPINGS = {
         ],
         "sales_history": [
             "sku depletions", "orders shipped", "order history", "sales forecast",
-            "rolling sales forecast", "take rate per sku", "share by sku", "sales by dc"
+            "rolling sales forecast", "take rate per sku", "share by sku", "sales by dc",
+            "replen orders", "packaging depletions"
         ],
         "purchase_orders": [
             "inbound receipts", "replen orders", "replen tool", "supply forecast",
@@ -169,115 +140,150 @@ FIELD_MAPPINGS = {
     "generic": {
         "sku": ["sku", "product code", "item id", "stock keeping unit", "item code", "product", 
                 "product id", "item number", "part number", "material number", "sku code", 
-                "product number", "variant id", "item", "upc", "product sku"],
+                "product number", "variant id", "item", "upc", "product sku", "product name",
+                "product description", "product_title", "production"],
         "quantity": ["quantity", "qty", "stock count", "inventory level", "on hand", 
                     "available", "stock", "inventory", "in stock", "units", "on-hand",
                     "qty on hand", "physical qty", "inventory on hand", "available quantity",
-                    "total qty", "cases", "pallets", "units", "inventory value", "count"],
+                    "total qty", "cases", "pallets", "units", "inventory value", "count",
+                    "total units", "eom inventory", "ordered_item_quantity", "net_quantity"],
         "location": ["location", "warehouse", "store", "dc", "site", "facility", "storage location",
                     "bin", "branch", "distribution center", "storage", "inventory location",
-                    "warehouse location", "destination", "origin", "location name", "facility"],
+                    "warehouse location", "destination", "origin", "location name", "facility",
+                    "origin", "ship from", "ship to", "customer reference", "collection"],
         "time_period": ["date", "time period", "month", "week", "year", "period", "sales date", 
                         "order date", "transaction date", "ship date", "sales period", 
-                        "order period", "fiscal period", "date range", "day", "quarter"],
+                        "order period", "fiscal period", "date range", "day", "quarter",
+                        "order received", "last updated", "create date", "pickup date"],
         "revenue": ["revenue", "sales value", "total sales", "sales amount", "gross sales", 
                     "sales revenue", "net sales", "sales total", "amount", "order value", 
-                    "transaction value", "gross revenue", "total value", "total revenue"],
+                    "transaction value", "gross revenue", "total value", "total revenue",
+                    "total received quantity", "sw mo", "upc"],
         "channel": ["channel", "sales channel", "platform", "marketplace", "store type", 
                     "sales source", "outlet", "point of sale", "pos", "sales medium", 
-                    "sales location", "customer type", "order type", "order source"],
+                    "sales location", "customer type", "order type", "order source",
+                    "type", "deposco reserved", "po #"],
         "purchase_order_id": ["purchase order id", "po id", "order number", "po number", "po #", 
                             "purchase order", "order id", "po reference", "po no", "po num", 
-                            "po", "order #", "reference number", "order reference", "po name"],
+                            "po", "order #", "reference number", "order reference", "po name",
+                            "transport", "purchase order", "production id", "batch number", "lot"],
         "arrival_date": ["arrival date", "expected delivery", "eta", "delivery date", 
                         "due date", "expected arrival", "receipt date", "promised date", 
                         "expected receipt", "arrival date", "delivery", "ship by", "ship date",
-                        "planned arrival date", "pickup date"],
+                        "planned arrival date", "pickup date", "ships by"],
         "cost": ["cost", "unit cost", "purchase price", "item cost", "po cost", 
                 "invoice cost", "order cost", "product cost", "buying cost", 
                 "acquisition cost", "landed cost", "cost price", "purchase cost",
-                "invoice $ per case", "price per unit", "cogs"],
+                "invoice $ per case", "price per unit", "cogs", "invoice #", "invoice sent"],
         "order_date": ["order date", "order placed", "date ordered", "po date", "issue date", 
                     "creation date", "placed date", "purchase date", "ordering date", 
-                    "submitted date", "created date", "po created", "order created"],
+                    "submitted date", "created date", "po created", "order created", "invoice date"],
         "vendor": ["vendor", "supplier", "manufacturer", "seller", "vendor name", 
                 "supplier name", "manufacturer name", "company", "vendor id", 
                 "supplier id", "provider", "source", "partner", "procurement source",
-                "transport", "carrier"],
+                "transport", "carrier", "owned inventory", "supplier 1"],
         "has_arrived": ["has arrived", "arrived", "received", "status", "receipt status", 
                     "delivery status", "arrival status", "receipt confirmed", "in stock", 
-                    "arrived status", "received status", "status code", "reception status"],
+                    "arrived status", "received status", "status code", "reception status",
+                    "po status", "hts codes", "order received"],
         "price": ["price", "unit price", "selling price", "retail price", "msrp", 
                 "list price", "sales price", "item price", "product price", 
-                "standard price", "base price", "rrp", "market price", "purchase price"],
+                "standard price", "base price", "rrp", "market price", "purchase price",
+                "on hand", "sw nv", "product upc", "returned_item_quantity", "po line number"],
         "category": ["category", "product category", "item type", "product type", 
                     "department", "class", "group", "product group", "merchandise group", 
                     "item category", "product class", "merchandise category", "category name",
-                    "collection", "hierarchy", "product family"]
+                    "collection", "hierarchy", "product family", "product code"]
     },
     
     # Retail/fashion specific mappings 
     "retail": {
-        "sku": ["sku", "variant_sku", "variant sku", "product sku", "product code", "style number", "style code"],
-        "quantity": ["available", "in stock", "on hand", "physical quantity", "inventory value"],
-        "location": ["warehouse", "store", "dc", "fulfillment center", "storage"],
-        "time_period": ["month", "date", "period", "week", "quarter", "year", "season"],
-        "category": ["collection", "category", "product type", "style", "department"]
+        "sku": ["sku", "variant_sku", "variant sku", "product sku", "product code", "style number", 
+                "style code", "item number", "product id", "model number", "item code",
+                "product model", "part number", "product sku", "product name", "product description",
+                "product_title", "master forecasts"],
+        "quantity": ["available", "in stock", "on hand", "physical quantity", "inventory value",
+                    "on-hand", "total on-hand", "inventory", "eom inventory"],
+        "location": ["warehouse", "store", "dc", "fulfillment center", "storage", "collection",
+                    "customer reference"],
+        "time_period": ["month", "date", "period", "week", "quarter", "year", "season", 
+                       "date sold", "purchase date", "sale date", "order time", 
+                       "transaction time", "transaction date", "order date", "created date",
+                       "last updated", "l30 day sales", "units sold by month"],
+        "category": ["collection", "category", "product type", "style", "department"],
+        "revenue": ["revenue", "sales", "amount", "total", "price", "sales amount", "order value",
+                   "sales value", "order total", "transaction value", "sale amount", "purchase amount",
+                   "total received quantity", "upc"],
+        "purchase_order_id": ["po number", "order number", "purchase order", "transport"],
+        "arrival_date": ["planned arrival date", "eta", "delivery date", "ships by"],
+        "sku": ["product id to sku map", "product name", "product description", "master forecasts"]
     },
     
     # Food/CPG specific mappings
     "food_cpg": {
-        "sku": ["item code", "product code", "upc", "gtin", "product code"],
-        "quantity": ["cases", "pallets", "units", "eaches", "case quantity", "physical inventory"],
-        "location": ["facility", "warehouse", "dc", "lineage", "distribution center"],
-        "time_period": ["production date", "expiration date", "best by", "manufacture date"],
-        "category": ["product type", "category", "product family"]
+        "sku": ["item code", "product code", "upc", "gtin", "product code", "item number", 
+                "product id", "code", "product", "item", "sku", "product description", "production"],
+        "quantity": ["cases", "pallets", "units", "eaches", "case quantity", "physical inventory",
+                    "mid-feb physical count"],
+        "location": ["facility", "warehouse", "dc", "lineage", "distribution center", "origin"],
+        "time_period": ["production date", "expiration date", "best by", "manufacture date",
+                        "order date", "pickup date", "invoice date", "ship date"],
+        "category": ["product type", "category", "product family"],
+        "purchase_order_id": ["production id", "batch number", "lot number", "order number", "po number", 
+                             "production batch", "manufacturing order", "production order", "lot id",
+                             "batch id", "lot", "batch", "transport", "po #"],
+        "arrival_date": ["production date", "completion date", "delivery date", "ship date", 
+                        "expected arrival", "availability date", "ready date", "delivery", 
+                        "estimated arrival", "finish date", "production completion", "pickup date"],
+        "cost": ["invoice $ per case", "invoice #", "invoice sent"],
+        "vendor": ["supplier", "manufacturer", "owned inventory", "rite stuff foods"]
     },
     
     # Distribution/Supply Chain specific mappings 
     "distribution": {
-        "sku": ["smart sku id", "item code", "product", "sku code", "item number"],
-        "quantity": ["on hand (actl)", "available", "on hand", "qty", "inventory on hand"],
-        "location": ["dc", "warehouse", "storage location", "fulfillment center"],
-        "time_period": ["week", "weeknum", "week tue", "fiscal week", "period"],
-        "category": ["product group", "category", "class", "department"]
+        "sku": ["smart sku id", "item code", "product", "sku code", "item number", "sku id",
+                "sku number", "sku", "item id", "product id", "product code", 
+                "total - product depletions %"],
+        "quantity": ["on hand (actl)", "available", "on hand", "qty", "inventory on hand",
+                    "actual qty", "physical qty", "avail qty", "qty on hand", "quantity",
+                    "nb orders", "total qty", "share"],
+        "location": ["dc", "warehouse", "wh", "location", "storage location", "inventory location", 
+                    "facility", "distribution center", "fulfillment center", "whs", "loc",
+                    "inventory loc", "storage", "warehouse loc", "whse", "site", "ship to state",
+                    "ship from", "customer reference"],
+        "time_period": ["week", "weeknum", "week tue", "fiscal week", "period", "year",
+                       "ship date", "create date", "date"],
+        "category": ["product group", "category", "class", "department"],
+        "vendor": ["vendor", "supplier", "carrier"],
+        "purchase_order_id": ["purchase order", "po number", "order number"],
+        "sku": ["total - product depletions %"],
+        "time_period": ["create date", "ship date", "year"]
     }
 }
 
-# Expanded core date patterns
+# Definition for how to detect and convert various date formats
 DATE_FORMAT_PATTERNS = [
     # Standard date formats
     {"pattern": r"^\d{4}-\d{1,2}-\d{1,2}$", "format": "%Y-%m-%d"},  # YYYY-MM-DD
+    {"pattern": r"^\d{4}-\d{1,2}-\d{1,2}\s\d{1,2}:\d{1,2}:\d{1,2}$", "format": "%Y-%m-%d %H:%M:%S"},  # YYYY-MM-DD HH:MM:SS
     {"pattern": r"^\d{1,2}/\d{1,2}/\d{4}$", "format": "%m/%d/%Y"},  # MM/DD/YYYY
     {"pattern": r"^\d{1,2}/\d{1,2}/\d{2}$", "format": "%m/%d/%y"},  # MM/DD/YY
     {"pattern": r"^\d{1,2}-\d{1,2}-\d{4}$", "format": "%m-%d-%Y"},  # MM-DD-YYYY
     {"pattern": r"^\d{1,2}-\d{1,2}-\d{2}$", "format": "%m-%d-%y"},  # MM-DD-YY
     {"pattern": r"^\d{4}/\d{1,2}/\d{1,2}$", "format": "%Y/%m/%d"},  # YYYY/MM/DD
-    {"pattern": r"^\d{2}\.\d{2}\.\d{4}$", "format": "%d.%m.%Y"},    # DD.MM.YYYY
-    {"pattern": r"^\d{4}\.\d{2}\.\d{2}$", "format": "%Y.%m.%d"},    # YYYY.MM.DD
     
     # Month name formats
     {"pattern": r"^\d{1,2}\s[A-Za-z]{3,9}\s\d{4}$", "format": "%d %B %Y"},  # DD Month YYYY
     {"pattern": r"^[A-Za-z]{3,9}\s\d{1,2},?\s\d{4}$", "format": "%B %d, %Y"},  # Month DD, YYYY
-    {"pattern": r"^[A-Za-z]{3}\s\d{1,2},?\s\d{4}$", "format": "%b %d, %Y"},  # MMM DD, YYYY
-    {"pattern": r"^\d{1,2}-[A-Za-z]{3}-\d{2,4}$", "format": "%d-%b-%Y"},  # DD-MMM-YYYY
+    {"pattern": r"^[A-Za-z]{3}\s\d{4}$", "format": "%b %Y"},  # MMM YYYY (like Jul 2021)
     
     # Fiscal periods
     {"pattern": r"^Q[1-4]\s\d{4}$", "format": None, "handler": "fiscal_quarter"},  # Q1 2023
     {"pattern": r"^[A-Za-z]{3,9}\s\d{4}$", "format": "%B %Y"},  # Month YYYY
-    {"pattern": r"^[A-Za-z]{3}\s\d{4}$", "format": "%b %Y"},  # MMM YYYY
     
     # Week-based formats
     {"pattern": r"^Week\s\d{1,2}$", "format": None, "handler": "week_number"},  # Week 12
     {"pattern": r"^WK\s\d{1,2}$", "format": None, "handler": "week_number"},  # WK 12
-    {"pattern": r"^W\d{1,2}\s\d{4}$", "format": None, "handler": "iso_week"},  # W12 2023
-    
-    # ISO formats
-    {"pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", "format": "%Y-%m-%dT%H:%M:%S"},  # ISO datetime
-    {"pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", "format": "%Y-%m-%dT%H:%M:%SZ"},  # ISO UTC
-    
-    # Timestamp formats
-    {"pattern": r"^\d{10}$", "format": None, "handler": "unix_timestamp"},  # Unix timestamp
 ]
 
 def fuzzy_match(target, candidates, threshold=85):
@@ -413,12 +419,10 @@ def identify_header_row(df, required_fields, field_mappings):
     
     return best_row if best_score >= 2 else 0  # Return 0 if no good match
 
-# Enhanced parse_date_value function
 def parse_date_value(value):
     """
-    Attempts to parse a date value using multiple formats and patterns.
+    Enhanced date parsing with better format detection and error handling.
     Returns a datetime object if successful, None otherwise.
-    Now with support for learned patterns.
     """
     if pd.isna(value):
         return None
@@ -427,24 +431,28 @@ def parse_date_value(value):
     if isinstance(value, (datetime, pd.Timestamp)):
         return value
     
-    # Convert to string for parsing
-    value_str = str(value).strip()
-    
-    # Handle Excel serial date numbers
-    if value_str.isdigit() or (value_str.replace('.', '', 1).isdigit() and value_str.count('.') <= 1):
+    # Handle numeric Excel dates
+    if isinstance(value, (int, float)):
         try:
             # Excel dates are number of days since 1899-12-30 (or 1904-01-01 for Mac)
-            excel_date = float(value_str)
-            if 1 <= excel_date <= 50000:  # Reasonable range for Excel dates
-                return pd.to_datetime('1899-12-30') + pd.Timedelta(days=excel_date)
+            if 0 < value < 50000:  # Reasonable range for Excel dates
+                try:
+                    # Try Windows Excel date system first
+                    return pd.to_datetime('1899-12-30') + pd.Timedelta(days=float(value))
+                except:
+                    # Fall back to Mac Excel date system
+                    try:
+                        return pd.to_datetime('1904-01-01') + pd.Timedelta(days=float(value))
+                    except:
+                        pass
         except:
             pass
     
-    # Load additional learned patterns
-    all_patterns = DATE_FORMAT_PATTERNS + load_learned_patterns()
+    # Convert to string for parsing
+    value_str = str(value).strip()
     
-    # Try each date pattern
-    for pattern_info in all_patterns:
+    # Handle common string date formats
+    for pattern_info in DATE_FORMAT_PATTERNS:
         if re.match(pattern_info["pattern"], value_str):
             if "format" in pattern_info and pattern_info["format"]:
                 try:
@@ -452,9 +460,7 @@ def parse_date_value(value):
                 except:
                     pass
             elif "handler" in pattern_info:
-                handler_name = pattern_info["handler"]
-                
-                if handler_name == "fiscal_quarter":
+                if pattern_info["handler"] == "fiscal_quarter":
                     # Handle fiscal quarter format (Q1 2023)
                     match = re.match(r"Q(\d{1})\s(\d{4})", value_str)
                     if match:
@@ -462,63 +468,35 @@ def parse_date_value(value):
                         year = int(match.group(2))
                         month = (quarter - 1) * 3 + 1  # Q1->1, Q2->4, Q3->7, Q4->10
                         return datetime(year, month, 1)
-                        
-                elif handler_name == "week_number":
+                elif pattern_info["handler"] == "week_number":
                     # Handle week number format (Week 12)
                     match = re.match(r"(?:Week|WK)\s(\d{1,2})", value_str)
                     if match:
                         week = int(match.group(1))
                         # Use the current year as a default
-                        return datetime.now().replace(month=1, day=1) + timedelta(weeks=week-1)
-                        
-                elif handler_name == "iso_week":
-                    # Handle ISO week format (W12 2023)
-                    match = re.match(r"W(\d{1,2})\s(\d{4})", value_str)
-                    if match:
-                        week = int(match.group(1))
-                        year = int(match.group(2))
-                        # Convert ISO week to date
-                        iso_date = datetime.strptime(f'{year}-W{week:02d}-1', '%Y-W%W-%w')
-                        return iso_date
-                        
-                elif handler_name == "unix_timestamp":
-                    # Handle Unix timestamp (seconds since 1970)
-                    try:
-                        timestamp = int(value_str)
-                        if 1000000000 <= timestamp <= 9999999999:  # Reasonable range for Unix timestamps
-                            return datetime.fromtimestamp(timestamp)
-                    except:
-                        pass
+                        return datetime.now().replace(month=1, day=1) + pd.Timedelta(weeks=week-1)
     
-    # Try pandas to_datetime as a fallback with error handling
+    # Try pandas to_datetime as a fallback with multiple error handling approaches
     try:
-        dt = pd.to_datetime(value_str, errors='coerce')
-        if not pd.isna(dt):
-            # Try to learn this pattern for future use
-            if ' ' in value_str:
-                # Common format with spaces like "25 Dec 2023"
-                pattern = r'^\d{1,2}\s[A-Za-z]{3}\s\d{4}$'
-                format_str = '%d %b %Y'
-                save_learned_pattern(pattern, format_str)
-            elif '/' in value_str:
-                # Attempt to determine the format: mm/dd/yyyy vs dd/mm/yyyy
-                parts = value_str.split('/')
-                if len(parts) == 3:
-                    # Check common indicators of DD/MM format (day > 12)
-                    if parts[0].isdigit() and int(parts[0]) > 12 and int(parts[0]) <= 31:
-                        pattern = r'^\d{1,2}/\d{1,2}/\d{4}$'
-                        format_str = '%d/%m/%Y'
-                        save_learned_pattern(pattern, format_str)
-            
-            return dt
+        return pd.to_datetime(value)
     except:
-        pass
-        
-    return None
+        try:
+            # Try with different format inference
+            return pd.to_datetime(value, infer_datetime_format=True)
+        except:
+            try:
+                # Try with dayfirst for international formats
+                return pd.to_datetime(value, dayfirst=True)
+            except:
+                try:
+                    # Last resort - try with yearfirst
+                    return pd.to_datetime(value, yearfirst=True)
+                except:
+                    return None
 
 def validate_and_convert_value(value, field_schema):
     """
-    Validates and converts a value based on its expected type and validation rules.
+    Validates and converts a value based on the field schema.
     Returns the converted value if valid, None otherwise.
     """
     if pd.isna(value):
@@ -529,12 +507,21 @@ def validate_and_convert_value(value, field_schema):
     
     # Convert based on expected type
     if field_type == "str":
+        # Handle cases where numbers are stored as strings
+        if isinstance(value, (int, float)):
+            value = str(value)
+            
         value = str(value).strip()
         
+        # Reject empty strings for required fields
+        if not value and field_schema.get("required", False):
+            return None
+            
         # Validate alphanumeric
         if validation == "alphanumeric":
-            # Allow alphanumeric plus common separators
-            if not re.match(r'^[A-Za-z0-9\-_\.\/\s]+$', value):
+            # Allow alphanumeric plus common separators and reasonable punctuation
+            if not re.match(r'^[A-Za-z0-9\-_\.\/\s\(\)\&\+\,\#\'\"\:\;\°\%\!]*$', value):
+                print(f"Rejecting non-alphanumeric value: '{value}'")
                 return None
         
         return value
@@ -542,6 +529,10 @@ def validate_and_convert_value(value, field_schema):
     elif field_type == "float":
         # Try to convert to float
         try:
+            # Handle currency and percentage formatting
+            if isinstance(value, str):
+                value = value.replace('$', '').replace(',', '').replace('%', '')
+                
             float_val = float(value)
             
             # Validate numeric constraints
@@ -553,6 +544,7 @@ def validate_and_convert_value(value, field_schema):
             return None
     
     elif field_type == "datetime":
+        # For datetime type, we don't need alphanumeric validation - just parse the date
         return parse_date_value(value)
     
     elif field_type == "bool":
@@ -563,9 +555,9 @@ def validate_and_convert_value(value, field_schema):
             return value != 0
         elif isinstance(value, str):
             value = value.lower().strip()
-            if value in ('yes', 'true', '1', 't', 'y'):
+            if value in ('yes', 'true', '1', 't', 'y', 'received', 'arrived', 'complete', 'approved'):
                 return True
-            elif value in ('no', 'false', '0', 'f', 'n'):
+            elif value in ('no', 'false', '0', 'f', 'n', 'pending', 'not received'):
                 return False
         return None
     
@@ -640,13 +632,41 @@ def detect_column_data_types(df, sample_rows=100):
     
     return column_types
 
-def map_columns_to_fields(columns, field_mappings, observed_types=None):
+def map_columns_to_fields(columns, field_mappings, observed_types=None, sheet_category=None, is_pivot=False):
     """
     Maps dataframe columns to expected fields based on name matching and data types.
     Returns a dictionary mapping column names to field names.
     """
     field_map = {}
     matched_fields = set()
+    
+    # Special handling for pivot tables
+    if is_pivot:
+        # Always map 'value' to 'quantity' as the highest priority for all sheet types
+        if "value" in columns:
+            field_map["value"] = "quantity"
+            matched_fields.add("quantity")
+        
+        # For pivot tables, map row_header_1 appropriately based on sheet_category
+        if "row_header_1" in columns:
+            if sheet_category in ["inventory_on_hand", "sales_history", "item_master"]:
+                field_map["row_header_1"] = "sku"
+                matched_fields.add("sku")
+            elif sheet_category == "purchase_orders":
+                if "purchase_order_id" not in matched_fields:
+                    field_map["row_header_1"] = "purchase_order_id"
+                    matched_fields.add("purchase_order_id")
+                if "row_header_2" in columns and "sku" not in matched_fields:
+                    field_map["row_header_2"] = "sku"
+                    matched_fields.add("sku")
+        
+        # Retain additional pivot handling for column_header if applicable
+        if sheet_category == "sales_history" and "column_header" in columns:
+            field_map["column_header"] = "time_period"
+            matched_fields.add("time_period")
+        if sheet_category == "purchase_orders" and "column_header" in columns and "arrival_date" not in matched_fields:
+            field_map["column_header"] = "arrival_date"
+            matched_fields.add("arrival_date")
     
     # First pass: Look for exact or high-confidence matches
     for col in columns:
@@ -708,6 +728,37 @@ def map_columns_to_fields(columns, field_mappings, observed_types=None):
                         matched_fields.add(field)
                         break
     
+    # Add debugging information
+    print(f"\n==== Column Mapping Results ====")
+    print(f"Sheet category: {sheet_category if sheet_category else 'unknown'}")
+    print(f"Is pivot table: {is_pivot}")
+    
+    # Print mapped fields
+    print("Mapped columns:")
+    for col, field in field_map.items():
+        print(f"  Column '{col}' → Field '{field}'")
+    
+    # Print unmapped columns
+    unmapped_cols = [col for col in columns if col not in field_map]
+    if unmapped_cols:
+        print("Unmapped columns:")
+        for col in unmapped_cols:
+            print(f"  '{col}'")
+    
+    # Check for missing required fields
+    if sheet_category and sheet_category in EXTRACTION_SCHEMAS:
+        schema = EXTRACTION_SCHEMAS[sheet_category]
+        required_fields = [field for field, info in schema.items() if info.get('required', False)]
+        mapped_fields = set(field_map.values())
+        missing_required = [field for field in required_fields if field not in mapped_fields]
+        
+        if missing_required:
+            print("WARNING: Missing required fields:")
+            for field in missing_required:
+                print(f"  Required field '{field}' not mapped to any column")
+    
+    print("================================\n")
+    
     return field_map
 
 def clean_extracted_data(df, field_map, schema):
@@ -715,6 +766,16 @@ def clean_extracted_data(df, field_map, schema):
     Cleans and validates extracted data based on the schema.
     Returns a cleaned dataframe with valid data only.
     """
+    # Check if all required fields are mapped
+    required_fields = [field for field, field_schema in schema.items() if field_schema["required"]]
+    mapped_fields = set(field_map.values())
+    missing_required = [field for field in required_fields if field not in mapped_fields]
+    
+    # If any required fields are missing, return empty dataframe
+    if missing_required:
+        print(f"Missing required fields for schema: {missing_required}. Skipping extraction.")
+        return pd.DataFrame()
+    
     # Create a new dataframe with mapped columns
     extracted_df = pd.DataFrame()
     
@@ -729,8 +790,8 @@ def clean_extracted_data(df, field_map, schema):
             )
     
     # Remove rows where required fields are missing
-    for field, field_schema in schema.items():
-        if field_schema["required"] and field in extracted_df.columns:
+    for field in required_fields:
+        if field in extracted_df.columns:
             extracted_df = extracted_df.dropna(subset=[field])
     
     # Remove rows that have too many missing values
@@ -994,10 +1055,14 @@ def extract_data(file, business_type="generic"):
             schema = EXTRACTION_SCHEMAS[sheet_category]
             required_fields = [f for f, s in schema.items() if s["required"]]
             
+            # Debug info
+            print(f"\nProcessing sheet '{sheet}' - Detected category: {sheet_category}")
+            
             # Check if this might be a pivot table
             is_pivot = is_pivot_table(df_sample)
             
             if is_pivot:
+                print(f"Sheet '{sheet}' appears to be a pivot table, attempting to normalize")
                 # Read the full sheet for pivot processing
                 df = xl.parse(sheet)
                 
@@ -1010,19 +1075,23 @@ def extract_data(file, business_type="generic"):
                 # Continue processing with the normalized dataframe
                 if not normalized_df.empty:
                     df = normalized_df
+                    print(f"Successfully normalized pivot table to {len(df)} rows")
                 else:
                     # Failed to normalize, try regular processing
                     is_pivot = False
+                    print(f"Failed to normalize pivot table, falling back to regular processing")
                     header_row = identify_header_row(df_sample, required_fields, field_mappings)
                     df = xl.parse(sheet, header=header_row)
             else:
                 # Regular table processing - identify header row
                 header_row = identify_header_row(df_sample, required_fields, field_mappings)
+                print(f"Identified header row at index {header_row}")
                 
                 # Now read the full sheet with the correct header row
                 df = xl.parse(sheet, header=header_row)
             
             if df.empty:
+                print(f"Sheet '{sheet}' is empty after header detection")
                 continue
                 
             # Ensure unique column names again after full load
@@ -1032,22 +1101,30 @@ def extract_data(file, business_type="generic"):
             column_types = detect_column_data_types(df)
             
             # Map columns to expected fields
-            field_map = map_columns_to_fields(df.columns, field_mappings, column_types)
+            field_map = map_columns_to_fields(df.columns, field_mappings, column_types, sheet_category, is_pivot)
             
             # Skip sheets with insufficient mappings (less than 2 fields or no required fields)
             mapped_required = [f for c, f in field_map.items() if f in required_fields]
             if len(field_map) < 2 or not mapped_required:
+                print(f"Insufficient field mappings for sheet '{sheet}' - skipping")
                 continue
                 
             # Clean and validate data
             cleaned_df = clean_extracted_data(df, field_map, schema)
             
+            if cleaned_df.empty:
+                print(f"No valid data extracted from sheet '{sheet}' after cleaning")
+                continue
+                
             # Convert to clean records and add to results
             records = convert_to_records(cleaned_df)
             
             # Add non-empty records to appropriate category
             if records:
+                print(f"Extracted {len(records)} records from sheet '{sheet}'")
                 extracted_data[sheet_category].extend(records)
+            else:
+                print(f"No valid records extracted from sheet '{sheet}'")
                 
         except Exception as e:
             print(f"Error processing sheet '{sheet}': {str(e)}")
@@ -1061,5 +1138,11 @@ def extract_data(file, business_type="generic"):
                     extracted_data[category][i][field] = float(value)
                 elif isinstance(value, (datetime, pd.Timestamp)):
                     extracted_data[category][i][field] = value.strftime("%Y-%m-%d")
+    
+    # Summary report
+    print("\n=== Extraction Summary ===")
+    for category, records in extracted_data.items():
+        print(f"{category}: {len(records)} records extracted")
+    print("=========================\n")
 
     return extracted_data

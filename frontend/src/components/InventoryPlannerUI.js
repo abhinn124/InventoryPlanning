@@ -455,155 +455,160 @@ const InventoryPlannerUI = () => {
               <CardTitle className="text-2xl">Extracted Data Tables</CardTitle>
             </CardHeader>
             <CardContent>
-              {["inventory_on_hand", "sales_history", "purchase_orders", "item_master"].map(
-                (category) =>
-                  result.extracted_data[category]?.length > 0 ? (
-                    <Card key={category} className="mt-6 shadow-md overflow-hidden">
-                      <CardHeader className="bg-gray-100 pb-3">
-                        <div className="flex justify-between items-center">
-                          <CardTitle className="capitalize text-xl flex items-center">
-                            <span>{category.replace("_", " ")}</span>
-                            <span className="ml-2 text-sm font-normal bg-blue-100 text-blue-800 py-0.5 px-2 rounded-full">
-                              {result.extracted_data[category].length} records
-                            </span>
-                          </CardTitle>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleMetrics(category)}
-                            className="text-gray-500 hover:text-gray-700 flex items-center"
-                          >
-                            <BarChart2 className="h-4 w-4 mr-1" />
-                            {expandedMetrics[category] ? "Hide Metrics" : "Show Metrics"}
-                          </Button>
-                        </div>
-                      </CardHeader>
+              {["inventory_on_hand", "sales_history", "purchase_orders", "item_master"]
+                .filter(category => {
+                  // Only show categories with valid data that have all required fields
+                  return result.extracted_data[category] && 
+                         Array.isArray(result.extracted_data[category]) &&
+                         result.extracted_data[category].length > 0 && 
+                         Object.keys(result.extracted_data[category][0] || {}).length > 0;
+                })
+                .map((category) => (
+                  <Card key={category} className="mt-6 shadow-md overflow-hidden">
+                    <CardHeader className="bg-gray-100 pb-3">
+                      <div className="flex justify-between items-center">
+                        <CardTitle className="capitalize text-xl flex items-center">
+                          <span>{category.replace("_", " ")}</span>
+                          <span className="ml-2 text-sm font-normal bg-blue-100 text-blue-800 py-0.5 px-2 rounded-full">
+                            {result.extracted_data[category].length} records
+                          </span>
+                        </CardTitle>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleMetrics(category)}
+                          className="text-gray-500 hover:text-gray-700 flex items-center"
+                        >
+                          <BarChart2 className="h-4 w-4 mr-1" />
+                          {expandedMetrics[category] ? "Hide Metrics" : "Show Metrics"}
+                        </Button>
+                      </div>
+                    </CardHeader>
 
-                      {/* Basic Metrics Section */}
-                      {expandedMetrics[category] && (
-                        <div className="bg-blue-50 p-4 border-t border-b border-blue-100">
-                          <h4 className="font-medium text-blue-800 mb-2">Data Metrics:</h4>
-                          {(() => {
-                            const metrics = generateBasicMetrics(result.extracted_data[category]);
-                            if (!metrics) return <p>No metrics available.</p>;
-                            return (
-                              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                <div className="bg-white p-3 rounded shadow-sm">
-                                  <div className="text-sm text-gray-500">Total Records</div>
-                                  <div className="text-2xl font-bold">{metrics.recordCount}</div>
-                                </div>
-                                {Object.entries(metrics.fieldCompleteness).map(([field, completeness]) => (
-                                  <div key={field} className="bg-white p-3 rounded shadow-sm">
-                                    <div className="text-sm text-gray-500 truncate" title={`${field} Completeness`}>
-                                      {field} Coverage
-                                    </div>
-                                    <div className="flex items-center">
-                                      <span className="text-xl font-bold">{completeness.toFixed(1)}%</span>
-                                      <Progress
-                                        value={completeness}
-                                        className="ml-2 w-20"
-                                        variant={completeness > 80 ? "success" : completeness > 50 ? "warning" : "danger"}
-                                      />
-                                    </div>
+                    {/* Basic Metrics Section */}
+                    {expandedMetrics[category] && (
+                      <div className="bg-blue-50 p-4 border-t border-b border-blue-100">
+                        <h4 className="font-medium text-blue-800 mb-2">Data Metrics:</h4>
+                        {(() => {
+                          const metrics = generateBasicMetrics(result.extracted_data[category]);
+                          if (!metrics) return <p>No metrics available.</p>;
+                          return (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                              <div className="bg-white p-3 rounded shadow-sm">
+                                <div className="text-sm text-gray-500">Total Records</div>
+                                <div className="text-2xl font-bold">{metrics.recordCount}</div>
+                              </div>
+                              {Object.entries(metrics.fieldCompleteness).map(([field, completeness]) => (
+                                <div key={field} className="bg-white p-3 rounded shadow-sm">
+                                  <div className="text-sm text-gray-500 truncate" title={`${field} Completeness`}>
+                                    {field} Coverage
                                   </div>
-                                ))}
-                                {/* For numeric fields, show min/max/avg */}
-                                {Object.entries(metrics).map(([key, value]) => {
-                                  if (
-                                    key !== "recordCount" &&
-                                    key !== "fieldCompleteness" &&
-                                    typeof value === "object"
-                                  ) {
-                                    return (
-                                      <div key={key} className="bg-white p-3 rounded shadow-sm col-span-2 md:col-span-3">
-                                        <div className="text-sm text-gray-500 mb-1">{key} Statistics</div>
-                                        <div className="grid grid-cols-3 gap-2">
-                                          <div>
-                                            <span className="text-xs text-gray-500">Min:</span>
-                                            <span className="ml-1 font-medium">{value.min.toFixed(2)}</span>
-                                          </div>
-                                          <div>
-                                            <span className="text-xs text-gray-500">Avg:</span>
-                                            <span className="ml-1 font-medium">{value.avg.toFixed(2)}</span>
-                                          </div>
-                                          <div>
-                                            <span className="text-xs text-gray-500">Max:</span>
-                                            <span className="ml-1 font-medium">{value.max.toFixed(2)}</span>
-                                          </div>
+                                  <div className="flex items-center">
+                                    <span className="text-xl font-bold">{completeness.toFixed(1)}%</span>
+                                    <Progress
+                                      value={completeness}
+                                      className="ml-2 w-20"
+                                      variant={completeness > 80 ? "success" : completeness > 50 ? "warning" : "danger"}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                              {/* For numeric fields, show min/max/avg */}
+                              {Object.entries(metrics).map(([key, value]) => {
+                                if (
+                                  key !== "recordCount" &&
+                                  key !== "fieldCompleteness" &&
+                                  typeof value === "object"
+                                ) {
+                                  return (
+                                    <div key={key} className="bg-white p-3 rounded shadow-sm col-span-2 md:col-span-3">
+                                      <div className="text-sm text-gray-500 mb-1">{key} Statistics</div>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                          <span className="text-xs text-gray-500">Min:</span>
+                                          <span className="ml-1 font-medium">{value.min.toFixed(2)}</span>
+                                        </div>
+                                        <div>
+                                          <span className="text-xs text-gray-500">Avg:</span>
+                                          <span className="ml-1 font-medium">{value.avg.toFixed(2)}</span>
+                                        </div>
+                                        <div>
+                                          <span className="text-xs text-gray-500">Max:</span>
+                                          <span className="ml-1 font-medium">{value.max.toFixed(2)}</span>
                                         </div>
                                       </div>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    <CardContent className="p-0">
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="bg-gray-100">
+                              {Object.keys(result.extracted_data[category][0]).map((header, idx) => (
+                                <th
+                                  key={idx}
+                                  className="border px-3 py-2 text-left capitalize hover:bg-gray-200 cursor-pointer"
+                                  onClick={() => sortData(category, header)}
+                                >
+                                  <div className="flex items-center">
+                                    <span>{header.replace("_", " ")}</span>
+                                    {sortConfig.category === category && sortConfig.field === header && (
+                                      <ArrowDownUp className="ml-1 h-3 w-3" />
+                                    )}
+                                  </div>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {getSortedData(category, result.extracted_data[category])
+                              .slice(0, 10)
+                              .map((row, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                                  {Object.entries(row).map(([key, value], idx2) => {
+                                    let cellClass = "border px-3 py-2 ";
+                                    if (typeof value === "number") {
+                                      cellClass += "text-right font-mono";
+                                    } else if (typeof value === "boolean") {
+                                      cellClass += "text-center";
+                                    } else if (String(value).match(/^\d{4}-\d{2}-\d{2}$/)) {
+                                      cellClass += "text-center font-mono text-purple-700";
+                                    }
+                                    return (
+                                      <td key={idx + "-" + idx2} className={cellClass}>
+                                        {valueDisplay(value)}
+                                      </td>
                                     );
-                                  }
-                                  return null;
-                                })}
-                              </div>
-                            );
-                          })()}
+                                  })}
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {result.extracted_data[category].length > 10 && (
+                        <div className="text-sm text-gray-500 p-3 bg-gray-50 border-t">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              Showing first 10 of {result.extracted_data[category].length} records
+                            </div>
+                            <Button variant="outline" size="sm" className="text-xs">
+                              View All Records
+                            </Button>
+                          </div>
                         </div>
                       )}
-
-                      <CardContent className="p-0">
-                        <div className="overflow-x-auto">
-                          <table className="w-full border-collapse">
-                            <thead>
-                              <tr className="bg-gray-100">
-                                {Object.keys(result.extracted_data[category][0]).map((header, idx) => (
-                                  <th
-                                    key={idx}
-                                    className="border px-3 py-2 text-left capitalize hover:bg-gray-200 cursor-pointer"
-                                    onClick={() => sortData(category, header)}
-                                  >
-                                    <div className="flex items-center">
-                                      <span>{header.replace("_", " ")}</span>
-                                      {sortConfig.category === category && sortConfig.field === header && (
-                                        <ArrowDownUp className="ml-1 h-3 w-3" />
-                                      )}
-                                    </div>
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {getSortedData(category, result.extracted_data[category])
-                                .slice(0, 10)
-                                .map((row, idx) => (
-                                  <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                                    {Object.entries(row).map(([key, value], idx2) => {
-                                      let cellClass = "border px-3 py-2 ";
-                                      if (typeof value === "number") {
-                                        cellClass += "text-right font-mono";
-                                      } else if (typeof value === "boolean") {
-                                        cellClass += "text-center";
-                                      } else if (String(value).match(/^\d{4}-\d{2}-\d{2}$/)) {
-                                        cellClass += "text-center font-mono text-purple-700";
-                                      }
-                                      return (
-                                        <td key={idx + "-" + idx2} className={cellClass}>
-                                          {valueDisplay(value)}
-                                        </td>
-                                      );
-                                    })}
-                                  </tr>
-                                ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        {result.extracted_data[category].length > 10 && (
-                          <div className="text-sm text-gray-500 p-3 bg-gray-50 border-t">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                Showing first 10 of {result.extracted_data[category].length} records
-                              </div>
-                              <Button variant="outline" size="sm" className="text-xs">
-                                View All Records
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ) : null
-              )}
+                    </CardContent>
+                  </Card>
+                ))}
             </CardContent>
           </Card>
         </>

@@ -2,11 +2,42 @@ import pandas as pd
 import numpy as np
 import warnings
 import re
-from datetime import datetime
+import pickle
+import os
+from datetime import datetime, timedelta
 from fuzzywuzzy import fuzz, process
 from collections import defaultdict
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+# Path to store learned date patterns
+LEARNED_PATTERNS_PATH = os.path.join(os.path.dirname(__file__), 'learned_date_patterns.pkl')
+
+# Load learned patterns if available
+def load_learned_patterns():
+    if os.path.exists(LEARNED_PATTERNS_PATH):
+        try:
+            with open(LEARNED_PATTERNS_PATH, 'rb') as f:
+                return pickle.load(f)
+        except:
+            pass
+    return []
+
+# Save new patterns
+def save_learned_pattern(pattern, format_string):
+    patterns = load_learned_patterns()
+    # Check if pattern already exists
+    if not any(p.get('pattern') == pattern for p in patterns):
+        patterns.append({
+            'pattern': pattern,
+            'format': format_string,
+            'learned': True
+        })
+        try:
+            with open(LEARNED_PATTERNS_PATH, 'wb') as f:
+                pickle.dump(patterns, f)
+        except:
+            pass  # Fail silently if cannot save
 
 # Sheet mappings for classifying sheets into categories
 SHEET_MAPPINGS = {
@@ -213,7 +244,7 @@ FIELD_MAPPINGS = {
     }
 }
 
-# Definition for how to detect and convert various date formats
+# Expanded core date patterns
 DATE_FORMAT_PATTERNS = [
     # Standard date formats
     {"pattern": r"^\d{4}-\d{1,2}-\d{1,2}$", "format": "%Y-%m-%d"},  # YYYY-MM-DD
@@ -222,18 +253,31 @@ DATE_FORMAT_PATTERNS = [
     {"pattern": r"^\d{1,2}-\d{1,2}-\d{4}$", "format": "%m-%d-%Y"},  # MM-DD-YYYY
     {"pattern": r"^\d{1,2}-\d{1,2}-\d{2}$", "format": "%m-%d-%y"},  # MM-DD-YY
     {"pattern": r"^\d{4}/\d{1,2}/\d{1,2}$", "format": "%Y/%m/%d"},  # YYYY/MM/DD
+    {"pattern": r"^\d{2}\.\d{2}\.\d{4}$", "format": "%d.%m.%Y"},    # DD.MM.YYYY
+    {"pattern": r"^\d{4}\.\d{2}\.\d{2}$", "format": "%Y.%m.%d"},    # YYYY.MM.DD
     
     # Month name formats
     {"pattern": r"^\d{1,2}\s[A-Za-z]{3,9}\s\d{4}$", "format": "%d %B %Y"},  # DD Month YYYY
     {"pattern": r"^[A-Za-z]{3,9}\s\d{1,2},?\s\d{4}$", "format": "%B %d, %Y"},  # Month DD, YYYY
+    {"pattern": r"^[A-Za-z]{3}\s\d{1,2},?\s\d{4}$", "format": "%b %d, %Y"},  # MMM DD, YYYY
+    {"pattern": r"^\d{1,2}-[A-Za-z]{3}-\d{2,4}$", "format": "%d-%b-%Y"},  # DD-MMM-YYYY
     
     # Fiscal periods
     {"pattern": r"^Q[1-4]\s\d{4}$", "format": None, "handler": "fiscal_quarter"},  # Q1 2023
     {"pattern": r"^[A-Za-z]{3,9}\s\d{4}$", "format": "%B %Y"},  # Month YYYY
+    {"pattern": r"^[A-Za-z]{3}\s\d{4}$", "format": "%b %Y"},  # MMM YYYY
     
     # Week-based formats
     {"pattern": r"^Week\s\d{1,2}$", "format": None, "handler": "week_number"},  # Week 12
     {"pattern": r"^WK\s\d{1,2}$", "format": None, "handler": "week_number"},  # WK 12
+    {"pattern": r"^W\d{1,2}\s\d{4}$", "format": None, "handler": "iso_week"},  # W12 2023
+    
+    # ISO formats
+    {"pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", "format": "%Y-%m-%dT%H:%M:%S"},  # ISO datetime
+    {"pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", "format": "%Y-%m-%dT%H:%M:%SZ"},  # ISO UTC
+    
+    # Timestamp formats
+    {"pattern": r"^\d{10}$", "format": None, "handler": "unix_timestamp"},  # Unix timestamp
 ]
 
 def fuzzy_match(target, candidates, threshold=85):
@@ -369,10 +413,12 @@ def identify_header_row(df, required_fields, field_mappings):
     
     return best_row if best_score >= 2 else 0  # Return 0 if no good match
 
+# Enhanced parse_date_value function
 def parse_date_value(value):
     """
     Attempts to parse a date value using multiple formats and patterns.
     Returns a datetime object if successful, None otherwise.
+    Now with support for learned patterns.
     """
     if pd.isna(value):
         return None
@@ -388,13 +434,17 @@ def parse_date_value(value):
     if value_str.isdigit() or (value_str.replace('.', '', 1).isdigit() and value_str.count('.') <= 1):
         try:
             # Excel dates are number of days since 1899-12-30 (or 1904-01-01 for Mac)
-            # Try to parse as Excel date
-            return pd.to_datetime('1899-12-30') + pd.Timedelta(days=float(value_str))
+            excel_date = float(value_str)
+            if 1 <= excel_date <= 50000:  # Reasonable range for Excel dates
+                return pd.to_datetime('1899-12-30') + pd.Timedelta(days=excel_date)
         except:
             pass
     
+    # Load additional learned patterns
+    all_patterns = DATE_FORMAT_PATTERNS + load_learned_patterns()
+    
     # Try each date pattern
-    for pattern_info in DATE_FORMAT_PATTERNS:
+    for pattern_info in all_patterns:
         if re.match(pattern_info["pattern"], value_str):
             if "format" in pattern_info and pattern_info["format"]:
                 try:
@@ -402,7 +452,9 @@ def parse_date_value(value):
                 except:
                     pass
             elif "handler" in pattern_info:
-                if pattern_info["handler"] == "fiscal_quarter":
+                handler_name = pattern_info["handler"]
+                
+                if handler_name == "fiscal_quarter":
                     # Handle fiscal quarter format (Q1 2023)
                     match = re.match(r"Q(\d{1})\s(\d{4})", value_str)
                     if match:
@@ -410,19 +462,59 @@ def parse_date_value(value):
                         year = int(match.group(2))
                         month = (quarter - 1) * 3 + 1  # Q1->1, Q2->4, Q3->7, Q4->10
                         return datetime(year, month, 1)
-                elif pattern_info["handler"] == "week_number":
+                        
+                elif handler_name == "week_number":
                     # Handle week number format (Week 12)
                     match = re.match(r"(?:Week|WK)\s(\d{1,2})", value_str)
                     if match:
                         week = int(match.group(1))
                         # Use the current year as a default
-                        return datetime.now().replace(month=1, day=1) + pd.Timedelta(weeks=week-1)
+                        return datetime.now().replace(month=1, day=1) + timedelta(weeks=week-1)
+                        
+                elif handler_name == "iso_week":
+                    # Handle ISO week format (W12 2023)
+                    match = re.match(r"W(\d{1,2})\s(\d{4})", value_str)
+                    if match:
+                        week = int(match.group(1))
+                        year = int(match.group(2))
+                        # Convert ISO week to date
+                        iso_date = datetime.strptime(f'{year}-W{week:02d}-1', '%Y-W%W-%w')
+                        return iso_date
+                        
+                elif handler_name == "unix_timestamp":
+                    # Handle Unix timestamp (seconds since 1970)
+                    try:
+                        timestamp = int(value_str)
+                        if 1000000000 <= timestamp <= 9999999999:  # Reasonable range for Unix timestamps
+                            return datetime.fromtimestamp(timestamp)
+                    except:
+                        pass
     
-    # Try pandas to_datetime as a fallback
+    # Try pandas to_datetime as a fallback with error handling
     try:
-        return pd.to_datetime(value)
+        dt = pd.to_datetime(value_str, errors='coerce')
+        if not pd.isna(dt):
+            # Try to learn this pattern for future use
+            if ' ' in value_str:
+                # Common format with spaces like "25 Dec 2023"
+                pattern = r'^\d{1,2}\s[A-Za-z]{3}\s\d{4}$'
+                format_str = '%d %b %Y'
+                save_learned_pattern(pattern, format_str)
+            elif '/' in value_str:
+                # Attempt to determine the format: mm/dd/yyyy vs dd/mm/yyyy
+                parts = value_str.split('/')
+                if len(parts) == 3:
+                    # Check common indicators of DD/MM format (day > 12)
+                    if parts[0].isdigit() and int(parts[0]) > 12 and int(parts[0]) <= 31:
+                        pattern = r'^\d{1,2}/\d{1,2}/\d{4}$'
+                        format_str = '%d/%m/%Y'
+                        save_learned_pattern(pattern, format_str)
+            
+            return dt
     except:
-        return None
+        pass
+        
+    return None
 
 def validate_and_convert_value(value, field_schema):
     """

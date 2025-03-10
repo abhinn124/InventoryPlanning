@@ -41,12 +41,10 @@ const getDateRange = (data, dateField) => {
   };
 };
 
-// Data Quality Heatmap Component
+// Data Quality Heatmap Component with defensive programming
 const DataQualityHeatmap = ({ data, schema }) => {
-  // Skip if no data or schema
-  if (!data || data.length === 0 || !schema) return null;
+  if (!data || !Array.isArray(data) || data.length === 0 || !schema) return null;
   
-  // Calculate completeness for each field
   const fields = Object.keys(schema);
   const fieldStats = fields.map(field => {
     const values = data.map(item => item[field]);
@@ -60,7 +58,6 @@ const DataQualityHeatmap = ({ data, schema }) => {
     };
   });
   
-  // Get overall data quality score
   const requiredFields = fieldStats.filter(f => f.required);
   const requiredCompleteness = requiredFields.length > 0 
     ? requiredFields.reduce((sum, field) => sum + field.completeness, 0) / requiredFields.length
@@ -68,7 +65,6 @@ const DataQualityHeatmap = ({ data, schema }) => {
   
   const overallCompleteness = fieldStats.reduce((sum, field) => sum + field.completeness, 0) / fieldStats.length;
   
-  // Determine quality status
   let qualityStatus;
   if (requiredCompleteness === 100 && overallCompleteness > 90) {
     qualityStatus = { icon: <CheckCircle className="text-green-500" />, label: "Excellent", color: "bg-green-100 text-green-800" };
@@ -186,19 +182,18 @@ const DataQualityHeatmap = ({ data, schema }) => {
   );
 };
 
-// Inventory Visualization Component
+// Inventory Visualization Component with defensive programming
 const InventoryVisualization = ({ data, businessType }) => {
   const [viewMode, setViewMode] = useState('quantity');
   
-  if (!data || data.length === 0) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
     return <div className="text-center p-8 text-gray-500">No inventory data available for visualization</div>;
   }
   
-  // Prepare data for charts
   const prepareInventoryData = () => {
-    // Group by SKU and sum quantities
     const skuGroups = {};
     data.forEach(item => {
+      if (!item.sku) return;
       const sku = item.sku || 'Unspecified';
       if (!skuGroups[sku]) {
         skuGroups[sku] = {
@@ -207,22 +202,23 @@ const InventoryVisualization = ({ data, businessType }) => {
           location: item.location || 'Unspecified'
         };
       }
-      skuGroups[sku].quantity += parseFloat(item.quantity) || 0;
+      let qty = 0;
+      if (typeof item.quantity === 'number') {
+        qty = item.quantity;
+      } else if (typeof item.quantity === 'string') {
+        qty = parseFloat(item.quantity.replace(/[^\d.-]/g, '')) || 0;
+      }
+      skuGroups[sku].quantity += qty;
     });
-    
-    // Convert to array and sort by quantity
     return Object.values(skuGroups)
       .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 10);  // Top 10 SKUs
+      .slice(0, 10);
   };
   
-  // Prepare location data if available
   const prepareLocationData = () => {
     if (!data.some(item => item.location)) {
       return null;
     }
-    
-    // Group by location and sum quantities
     const locationGroups = {};
     data.forEach(item => {
       const location = item.location || 'Unspecified';
@@ -233,20 +229,32 @@ const InventoryVisualization = ({ data, businessType }) => {
           skuCount: 0
         };
       }
-      locationGroups[location].quantity += parseFloat(item.quantity) || 0;
+      let qty = 0;
+      if (typeof item.quantity === 'number') {
+        qty = item.quantity;
+      } else if (typeof item.quantity === 'string') {
+        qty = parseFloat(item.quantity.replace(/[^\d.-]/g, '')) || 0;
+      }
+      locationGroups[location].quantity += qty;
       locationGroups[location].skuCount += 1;
     });
-    
-    // Convert to array
     return Object.values(locationGroups);
   };
   
   const inventoryData = prepareInventoryData();
   const locationData = prepareLocationData();
   
-  // Business-specific insights
   const getBusinessInsights = () => {
-    const totalQuantity = data.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
+    const totalQuantity = data.reduce((sum, item) => {
+      let qty = 0;
+      if (typeof item.quantity === 'number') {
+        qty = item.quantity;
+      } else if (typeof item.quantity === 'string') {
+        qty = parseFloat(item.quantity.replace(/[^\d.-]/g, '')) || 0;
+      }
+      return sum + qty;
+    }, 0);
+    
     const uniqueSkus = new Set(data.map(item => item.sku).filter(Boolean)).size;
     
     let insights = [
@@ -254,50 +262,41 @@ const InventoryVisualization = ({ data, businessType }) => {
       { icon: <Activity className="h-5 w-5" />, label: "Unique SKUs", value: uniqueSkus.toLocaleString() }
     ];
     
-    // Add business-specific insights
     if (businessType === 'retail') {
-      // Calculate potential low stock items (less than 5% of average)
       const avgQuantity = totalQuantity / uniqueSkus;
       const lowStockThreshold = avgQuantity * 0.05;
       const lowStockCount = inventoryData.filter(item => item.quantity < lowStockThreshold).length;
-      
       insights.push({ 
         icon: <AlertTriangle className="h-5 w-5 text-amber-500" />, 
         label: "Low Stock Items", 
         value: lowStockCount,
         highlight: lowStockCount > 0
       });
-    } 
-    else if (businessType === 'distribution') {
-      // Calculate location efficiency (% of locations with >90% of SKUs)
-      if (locationData) {
+    } else if (businessType === 'distribution') {
+      if (locationData && locationData.length > 0) {
         const locationCount = locationData.length;
         const highCoverageLocations = locationData.filter(loc => 
           loc.skuCount > uniqueSkus * 0.9
         ).length;
-        
         insights.push({ 
           icon: <TrendingUp className="h-5 w-5" />, 
           label: "Warehouse Utilization", 
           value: locationCount > 0 ? `${((highCoverageLocations / locationCount) * 100).toFixed(1)}%` : 'N/A'
         });
       }
-    }
-    else if (businessType === 'food_cpg') {
-      // For food/CPG, time-based insights are valuable
+    } else if (businessType === 'food_cpg') {
       insights.push({ 
         icon: <Calendar className="h-5 w-5" />, 
         label: "Avg Units Per SKU", 
-        value: (totalQuantity / uniqueSkus).toFixed(1)
+        value: uniqueSkus > 0 ? (totalQuantity / uniqueSkus).toFixed(1) : 'N/A'
       });
     }
     
     return insights;
   };
-  
+
   return (
     <div className="space-y-6">
-      {/* KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {getBusinessInsights().map((insight, index) => (
           <div key={index} className="bg-white p-4 rounded-lg shadow-sm border flex items-center">
@@ -314,11 +313,10 @@ const InventoryVisualization = ({ data, businessType }) => {
         ))}
       </div>
       
-      {/* Chart Tabs */}
       <Tabs defaultValue="topItems" className="w-full">
         <TabsList className="grid grid-cols-2 mb-4">
           <TabsTrigger value="topItems">Top Inventory Items</TabsTrigger>
-          {locationData && <TabsTrigger value="byLocation">Inventory by Location</TabsTrigger>}
+          {locationData && locationData.length > 0 && <TabsTrigger value="byLocation">Inventory by Location</TabsTrigger>}
         </TabsList>
         
         <TabsContent value="topItems" className="p-0">
@@ -336,72 +334,78 @@ const InventoryVisualization = ({ data, businessType }) => {
               </Select>
             </div>
             
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                {viewMode === 'quantity' ? (
-                  <BarChart
-                    data={inventoryData}
-                    margin={{ top: 5, right: 30, left: 20, bottom: 70 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="sku" angle={-45} textAnchor="end" height={70} />
-                    <YAxis />
-                    <Tooltip formatter={(value) => value.toLocaleString()} />
-                    <Legend />
-                    <Bar dataKey="quantity" fill="#0088FE" name="Quantity" />
-                  </BarChart>
-                ) : (
-                  <Treemap
-                    data={inventoryData}
-                    dataKey="quantity"
-                    nameKey="sku"
-                    fill="#0088FE"
-                    content={({ root, depth, x, y, width, height, index, name, value }) => (
-                      <g>
-                        <rect
-                          x={x}
-                          y={y}
-                          width={width}
-                          height={height}
-                          style={{
-                            fill: COLORS[index % COLORS.length],
-                            stroke: '#fff',
-                            strokeWidth: 2
-                          }}
-                        />
-                        {width > 70 && height > 30 && (
-                          <>
-                            <text
-                              x={x + width / 2}
-                              y={y + height / 2 - 10}
-                              textAnchor="middle"
-                              fill="#fff"
-                              fontSize={14}
-                              fontWeight="bold"
-                            >
-                              {name}
-                            </text>
-                            <text
-                              x={x + width / 2}
-                              y={y + height / 2 + 10}
-                              textAnchor="middle"
-                              fill="#fff"
-                              fontSize={12}
-                            >
-                              {value.toLocaleString()}
-                            </text>
-                          </>
-                        )}
-                      </g>
-                    )}
-                  />
-                )}
-              </ResponsiveContainer>
-            </div>
+            {inventoryData.length > 0 ? (
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  {viewMode === 'quantity' ? (
+                    <BarChart
+                      data={inventoryData}
+                      margin={{ top: 5, right: 30, left: 20, bottom: 70 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="sku" angle={-45} textAnchor="end" height={70} />
+                      <YAxis />
+                      <Tooltip formatter={(value) => value.toLocaleString()} />
+                      <Legend />
+                      <Bar dataKey="quantity" fill="#0088FE" name="Quantity" />
+                    </BarChart>
+                  ) : (
+                    <Treemap
+                      data={inventoryData}
+                      dataKey="quantity"
+                      nameKey="sku"
+                      fill="#0088FE"
+                      content={({ root, depth, x, y, width, height, index, name, value }) => (
+                        <g>
+                          <rect
+                            x={x}
+                            y={y}
+                            width={width}
+                            height={height}
+                            style={{
+                              fill: COLORS[index % COLORS.length],
+                              stroke: '#fff',
+                              strokeWidth: 2
+                            }}
+                          />
+                          {width > 70 && height > 30 && (
+                            <>
+                              <text
+                                x={x + width / 2}
+                                y={y + height / 2 - 10}
+                                textAnchor="middle"
+                                fill="#fff"
+                                fontSize={14}
+                                fontWeight="bold"
+                              >
+                                {name}
+                              </text>
+                              <text
+                                x={x + width / 2}
+                                y={y + height / 2 + 10}
+                                textAnchor="middle"
+                                fill="#fff"
+                                fontSize={12}
+                              >
+                                {value.toLocaleString()}
+                              </text>
+                            </>
+                          )}
+                        </g>
+                      )}
+                    />
+                  )}
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-80 flex items-center justify-center bg-gray-50 rounded-lg">
+                <div className="text-gray-500">No inventory data available for chart</div>
+              </div>
+            )}
           </div>
         </TabsContent>
         
-        {locationData && (
+        {locationData && locationData.length > 0 && (
           <TabsContent value="byLocation" className="p-0">
             <div className="bg-white p-4 rounded-lg shadow-sm border">
               <h3 className="text-lg font-medium mb-4">Inventory by Location</h3>
@@ -428,30 +432,24 @@ const InventoryVisualization = ({ data, businessType }) => {
   );
 };
 
-// Sales History Visualization Component
+// Sales History Visualization Component with defensive programming
 const SalesHistoryVisualization = ({ data, businessType }) => {
   const [viewMode, setViewMode] = useState('trend');
   
-  if (!data || data.length === 0) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
     return <div className="text-center p-8 text-gray-500">No sales data available for visualization</div>;
   }
   
-  // Extract time periods if available
   const hasTimePeriod = data.some(item => item['time period']);
   const dateRange = hasTimePeriod ? getDateRange(data, 'time period') : null;
   
-  // Prepare trend data
   const prepareTrendData = () => {
     if (!hasTimePeriod) return null;
-    
-    // Group by time period
     const trendData = {};
     data.forEach(item => {
       if (!item['time period']) return;
-      
       const date = new Date(item['time period']);
       const periodKey = date.toISOString().split('T')[0];
-      
       if (!trendData[periodKey]) {
         trendData[periodKey] = {
           date: periodKey,
@@ -459,23 +457,17 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
           revenue: 0
         };
       }
-      
       trendData[periodKey].quantity += parseFloat(item.quantity) || 0;
       trendData[periodKey].revenue += parseFloat(item.revenue) || 0;
     });
-    
-    // Convert to array and sort by date
     return Object.values(trendData)
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   };
   
-  // Prepare SKU data
   const prepareSkuData = () => {
-    // Group by SKU
     const skuData = {};
     data.forEach(item => {
       const sku = item.sku || 'Unspecified';
-      
       if (!skuData[sku]) {
         skuData[sku] = {
           sku,
@@ -484,28 +476,21 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
           channel: item.channel
         };
       }
-      
       skuData[sku].quantity += parseFloat(item.quantity) || 0;
       skuData[sku].revenue += parseFloat(item.revenue) || 0;
     });
-    
-    // Convert to array and sort by quantity or revenue
     return Object.values(skuData)
       .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 10);  // Top 10 SKUs
+      .slice(0, 10);
   };
   
-  // Prepare channel data if available
   const prepareChannelData = () => {
     if (!data.some(item => item.channel)) {
       return null;
     }
-    
-    // Group by channel
     const channelData = {};
     data.forEach(item => {
       const channel = item.channel || 'Unspecified';
-      
       if (!channelData[channel]) {
         channelData[channel] = {
           channel,
@@ -513,12 +498,9 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
           revenue: 0
         };
       }
-      
       channelData[channel].quantity += parseFloat(item.quantity) || 0;
       channelData[channel].revenue += parseFloat(item.revenue) || 0;
     });
-    
-    // Convert to array
     return Object.values(channelData);
   };
   
@@ -526,7 +508,6 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
   const skuData = prepareSkuData();
   const channelData = prepareChannelData();
   
-  // Business-specific insights
   const getBusinessInsights = () => {
     const totalQuantity = data.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
     const totalRevenue = data.reduce((sum, item) => sum + (parseFloat(item.revenue) || 0), 0);
@@ -537,19 +518,14 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
       { icon: <DollarSign className="h-5 w-5" />, label: "Total Revenue", value: formatCurrency(totalRevenue) }
     ];
     
-    // Add business-specific insights
     if (businessType === 'retail') {
-      // Calculate average revenue per unit
       const avgRevenue = totalRevenue / totalQuantity;
-      
       insights.push({ 
         icon: <TrendingUp className="h-5 w-5" />, 
         label: "Avg Revenue Per Unit", 
         value: formatCurrency(avgRevenue)
       });
-    } 
-    else if (businessType === 'distribution') {
-      // Calculate days in date range if available
+    } else if (businessType === 'distribution') {
       if (dateRange) {
         insights.push({ 
           icon: <Calendar className="h-5 w-5" />, 
@@ -557,9 +533,7 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
           value: dateRange.range > 0 ? Math.round(totalQuantity / dateRange.range).toLocaleString() : 'N/A'
         });
       }
-    }
-    else if (businessType === 'food_cpg') {
-      // For food/CPG, calculate product performance
+    } else if (businessType === 'food_cpg') {
       insights.push({ 
         icon: <TrendingUp className="h-5 w-5" />, 
         label: "Avg Sales Per SKU", 
@@ -572,7 +546,6 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
   
   return (
     <div className="space-y-6">
-      {/* KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {getBusinessInsights().map((insight, index) => (
           <div key={index} className="bg-white p-4 rounded-lg shadow-sm border flex items-center">
@@ -589,7 +562,6 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
         ))}
       </div>
       
-      {/* Chart Tabs */}
       <Tabs defaultValue={hasTimePeriod ? "trend" : "topItems"} className="w-full">
         <TabsList className="grid grid-cols-3 mb-4">
           {hasTimePeriod && <TabsTrigger value="trend">Sales Trend</TabsTrigger>}
@@ -696,29 +668,23 @@ const SalesHistoryVisualization = ({ data, businessType }) => {
   );
 };
 
-// Purchase Orders Visualization Component
+// Purchase Orders Visualization Component with defensive programming
 const PurchaseOrdersVisualization = ({ data, businessType }) => {
-  if (!data || data.length === 0) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
     return <div className="text-center p-8 text-gray-500">No purchase order data available for visualization</div>;
   }
   
-  // Check which fields we have
   const hasArrivalDate = data.some(item => item['arrival date']);
   const hasVendor = data.some(item => item.vendor);
   const hasCost = data.some(item => item.cost);
   
-  // Prepare timeline data
   const prepareTimelineData = () => {
     if (!hasArrivalDate) return null;
-    
-    // Group by arrival date
     const timelineData = {};
     data.forEach(item => {
       if (!item['arrival date']) return;
-      
       const date = new Date(item['arrival date']);
       const dateKey = date.toISOString().split('T')[0];
-      
       if (!timelineData[dateKey]) {
         timelineData[dateKey] = {
           date: dateKey,
@@ -727,26 +693,19 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
           orderCount: 0
         };
       }
-      
       timelineData[dateKey].quantity += parseFloat(item.quantity) || 0;
       timelineData[dateKey].cost += parseFloat(item.cost) || 0;
       timelineData[dateKey].orderCount += 1;
     });
-    
-    // Convert to array and sort by date
     return Object.values(timelineData)
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   };
   
-  // Prepare vendor data
   const prepareVendorData = () => {
     if (!hasVendor) return null;
-    
-    // Group by vendor
     const vendorData = {};
     data.forEach(item => {
       const vendor = item.vendor || 'Unspecified';
-      
       if (!vendorData[vendor]) {
         vendorData[vendor] = {
           vendor,
@@ -755,23 +714,17 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
           orderCount: 0
         };
       }
-      
       vendorData[vendor].quantity += parseFloat(item.quantity) || 0;
       vendorData[vendor].cost += parseFloat(item.cost) || 0;
       vendorData[vendor].orderCount += 1;
     });
-    
-    // Convert to array and sort by quantity
     return Object.values(vendorData)
       .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 10);  // Top 10 vendors
+      .slice(0, 10);
   };
   
-  // Prepare cost distribution data
   const prepareCostData = () => {
     if (!hasCost) return null;
-    
-    // Group orders by cost range
     const costRanges = [
       { name: '$0-$100', min: 0, max: 100 },
       { name: '$100-$500', min: 100, max: 500 },
@@ -789,7 +742,6 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
     
     data.forEach(item => {
       const cost = parseFloat(item.cost) || 0;
-      
       for (const range of costData) {
         if (cost >= range.min && cost < range.max) {
           range.count += 1;
@@ -798,8 +750,6 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
         }
       }
     });
-    
-    // Remove empty ranges
     return costData.filter(range => range.count > 0);
   };
   
@@ -807,7 +757,6 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
   const vendorData = prepareVendorData();
   const costData = prepareCostData();
   
-  // Business-specific insights
   const getBusinessInsights = () => {
     const totalQuantity = data.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
     const totalCost = data.reduce((sum, item) => sum + (parseFloat(item.cost) || 0), 0);
@@ -818,31 +767,23 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
       { icon: <DollarSign className="h-5 w-5" />, label: "Total Order Value", value: hasCost ? formatCurrency(totalCost) : 'N/A' }
     ];
     
-    // Add business-specific insights
     if (businessType === 'retail') {
-      // Calculate average cost per order
       const avgOrderValue = totalCost / orderCount;
-      
       insights.push({ 
         icon: <TrendingUp className="h-5 w-5" />, 
         label: "Avg Order Value", 
         value: hasCost ? formatCurrency(avgOrderValue) : 'N/A'
       });
-    } 
-    else if (businessType === 'distribution') {
-      // Calculate vendor metrics
+    } else if (businessType === 'distribution') {
       if (hasVendor) {
         const vendorCount = new Set(data.map(item => item.vendor).filter(Boolean)).size;
-        
         insights.push({ 
           icon: <Activity className="h-5 w-5" />, 
           label: "Active Vendors", 
           value: vendorCount.toLocaleString()
         });
       }
-    }
-    else if (businessType === 'food_cpg') {
-      // For food/CPG, calculate inventory turnover
+    } else if (businessType === 'food_cpg') {
       insights.push({ 
         icon: <Calendar className="h-5 w-5" />, 
         label: "Avg Units Per Order", 
@@ -855,7 +796,6 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
   
   return (
     <div className="space-y-6">
-      {/* KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {getBusinessInsights().map((insight, index) => (
           <div key={index} className="bg-white p-4 rounded-lg shadow-sm border flex items-center">
@@ -872,7 +812,6 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
         ))}
       </div>
       
-      {/* Chart Tabs */}
       <Tabs defaultValue={hasArrivalDate ? "timeline" : hasVendor ? "vendors" : "cost"} className="w-full">
         <TabsList className="grid grid-cols-3 mb-4">
           {hasArrivalDate && <TabsTrigger value="timeline">Order Timeline</TabsTrigger>}
@@ -966,27 +905,22 @@ const PurchaseOrdersVisualization = ({ data, businessType }) => {
   );
 };
 
-// Item Master Visualization Component
+// Item Master Visualization Component with defensive programming
 const ItemMasterVisualization = ({ data, businessType }) => {
-  if (!data || data.length === 0) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
     return <div className="text-center p-8 text-gray-500">No item master data available for visualization</div>;
   }
   
-  // Check which fields we have
   const hasCategory = data.some(item => item.category);
   const hasVendor = data.some(item => item.vendor);
   const hasPrice = data.some(item => item.price);
   const hasCost = data.some(item => item.cost);
   
-  // Prepare category data
   const prepareCategoryData = () => {
     if (!hasCategory) return null;
-    
-    // Group by category
     const categoryData = {};
     data.forEach(item => {
       const category = item.category || 'Unspecified';
-      
       if (!categoryData[category]) {
         categoryData[category] = {
           category,
@@ -995,29 +929,21 @@ const ItemMasterVisualization = ({ data, businessType }) => {
           totalPrice: 0
         };
       }
-      
       categoryData[category].count += 1;
-      
       if (hasPrice && item.price) {
         const price = parseFloat(item.price) || 0;
         categoryData[category].totalPrice += price;
       }
     });
-    
-    // Calculate averages
     Object.values(categoryData).forEach(category => {
       category.avgPrice = category.count > 0 ? category.totalPrice / category.count : 0;
     });
-    
-    // Convert to array and sort by count
     return Object.values(categoryData)
       .sort((a, b) => b.count - a.count);
   };
   
-  // Prepare price vs cost data
   const preparePriceVsCostData = () => {
     if (!hasPrice || !hasCost) return null;
-    
     return data
       .filter(item => item.price && item.cost)
       .map(item => ({
@@ -1030,44 +956,34 @@ const ItemMasterVisualization = ({ data, businessType }) => {
       .sort((a, b) => b.marginPercent - a.marginPercent);
   };
   
-  // Prepare vendor data
   const prepareVendorData = () => {
     if (!hasVendor) return null;
-    
-    // Group by vendor
     const vendorData = {};
     data.forEach(item => {
       const vendor = item.vendor || 'Unspecified';
-      
       if (!vendorData[vendor]) {
         vendorData[vendor] = {
           vendor,
           count: 0
         };
       }
-      
       vendorData[vendor].count += 1;
     });
-    
-    // Convert to array and sort by count
     return Object.values(vendorData)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10);  // Top 10 vendors
+      .slice(0, 10);
   };
   
   const categoryData = prepareCategoryData();
   const priceVsCostData = preparePriceVsCostData();
   const vendorData = prepareVendorData();
   
-  // Business-specific insights
   const getBusinessInsights = () => {
     const totalItems = data.length;
-    
     let insights = [
       { icon: <Package className="h-5 w-5" />, label: "Total SKUs", value: totalItems.toLocaleString() }
     ];
     
-    // Calculate average margin if we have price and cost
     if (hasPrice && hasCost) {
       const validItems = data.filter(item => item.price && item.cost);
       const totalMargin = validItems.reduce((sum, item) => 
@@ -1086,36 +1002,27 @@ const ItemMasterVisualization = ({ data, businessType }) => {
       });
     }
     
-    // Add business-specific insights
     if (businessType === 'retail') {
-      // Category diversity
       if (hasCategory) {
         const categoryCount = new Set(data.map(item => item.category).filter(Boolean)).size;
-        
         insights.push({ 
           icon: <Activity className="h-5 w-5" />, 
           label: "Product Categories", 
           value: categoryCount.toLocaleString()
         });
       }
-    } 
-    else if (businessType === 'distribution') {
-      // Vendor diversity
+    } else if (businessType === 'distribution') {
       if (hasVendor) {
         const vendorCount = new Set(data.map(item => item.vendor).filter(Boolean)).size;
-        
         insights.push({ 
           icon: <Activity className="h-5 w-5" />, 
           label: "Vendors", 
           value: vendorCount.toLocaleString()
         });
       }
-    }
-    else if (businessType === 'food_cpg') {
-      // For food/CPG, calculate average price
+    } else if (businessType === 'food_cpg') {
       if (hasPrice) {
         const avgPrice = data.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) / totalItems;
-        
         insights.push({ 
           icon: <DollarSign className="h-5 w-5" />, 
           label: "Avg Price", 
@@ -1129,7 +1036,6 @@ const ItemMasterVisualization = ({ data, businessType }) => {
   
   return (
     <div className="space-y-6">
-      {/* KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {getBusinessInsights().map((insight, index) => (
           <div key={index} className="bg-white p-4 rounded-lg shadow-sm border flex items-center">
@@ -1146,7 +1052,6 @@ const ItemMasterVisualization = ({ data, businessType }) => {
         ))}
       </div>
       
-      {/* Chart Tabs */}
       <Tabs defaultValue={hasCategory ? "categories" : hasPrice && hasCost ? "margins" : "vendors"} className="w-full">
         <TabsList className="grid grid-cols-3 mb-4">
           {hasCategory && <TabsTrigger value="categories">Product Categories</TabsTrigger>}
@@ -1237,7 +1142,6 @@ const ItemMasterVisualization = ({ data, businessType }) => {
                       fill="#8884d8"
                       shape={(props) => {
                         const { cx, cy, payload } = props;
-                        // Color based on margin percentage
                         const margin = payload.marginPercent;
                         let fill;
                         if (margin > 50) fill = '#4CAF50';

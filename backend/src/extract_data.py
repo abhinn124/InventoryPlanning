@@ -678,6 +678,179 @@ def convert_to_records(df):
     
     return clean_records
 
+def is_pivot_table(df):
+    """
+    Detect if a dataframe likely contains a pivot table based on structure.
+    """
+    if len(df) < 3 or len(df.columns) < 3:
+        return False
+        
+    # Check for blank cells in what would be the header region
+    has_empty_corner = pd.isna(df.iloc[0, 0])
+    
+    # Check for multiple header rows with common patterns
+    potential_row_headers = []
+    for i in range(min(3, len(df))):
+        row = df.iloc[i]
+        non_null_count = row.count()
+        null_pattern = [pd.isna(x) for x in row]
+        
+        # Pivots often have empty cells in header rows
+        if non_null_count > 0 and non_null_count < len(row):
+            potential_row_headers.append(i)
+    
+    # Look for hierarchical column structure
+    hierarchical_cols = False
+    if len(df.columns) > 3:
+        # Get first few rows to check for potential column headers
+        header_sample = df.iloc[:3, :3].values
+        # Count unique values in each column of the sample
+        col_unique_counts = [len(set([str(x) for x in col if not pd.isna(x)])) 
+                            for col in header_sample.T]
+        # If first column has fewer unique values, might be a row header
+        if col_unique_counts and col_unique_counts[0] < np.mean(col_unique_counts[1:]):
+            hierarchical_cols = True
+    
+    # Check for numeric data concentrated in the "body" of the table
+    numeric_concentration = False
+    if len(df) > 5 and len(df.columns) > 5:
+        # Check central section of the dataframe
+        central_section = df.iloc[3:, 1:]
+        numeric_count = central_section.select_dtypes(include=[np.number]).count().sum()
+        total_count = central_section.count().sum()
+        if total_count > 0 and numeric_count / total_count > 0.7:
+            numeric_concentration = True
+    
+    # Combined signals suggest a pivot table
+    pivot_signals = sum([
+        has_empty_corner,
+        len(potential_row_headers) > 0,
+        hierarchical_cols,
+        numeric_concentration
+    ])
+    
+    return pivot_signals >= 2  # At least 2 signals needed to classify as pivot
+
+def extract_pivot_header_structure(df):
+    """
+    Extract hierarchical header structure from a pivot table.
+    Returns row_headers, column_headers, and data_start_position.
+    """
+    # Initialize result
+    row_header_cols = []
+    col_header_rows = []
+    data_start_row = 0
+    data_start_col = 0
+    
+    # Find the first row with significant non-null values
+    for i in range(min(10, len(df))):
+        non_null_count = df.iloc[i].count()
+        if non_null_count > len(df.columns) * 0.5:
+            data_start_row = i
+            break
+    
+    # Determine row header columns (typically on the left)
+    # We look for columns where values are repeated or are string labels
+    for j in range(min(5, len(df.columns))):
+        col_values = df.iloc[data_start_row:, j].dropna()
+        if len(col_values) > 0:
+            # Check if column contains mostly strings
+            string_ratio = col_values.apply(lambda x: isinstance(x, str)).mean()
+            # Or has many repeated values
+            unique_ratio = len(col_values.unique()) / len(col_values)
+            
+            if string_ratio > 0.7 or unique_ratio < 0.4:
+                row_header_cols.append(j)
+                data_start_col = max(data_start_col, j + 1)
+            else:
+                break
+        else:
+            break
+    
+    # If we didn't find any row header columns but should have
+    if not row_header_cols and data_start_row > 0:
+        row_header_cols = [0]  # Default to first column
+        data_start_col = 1
+    
+    # Determine column header rows (typically at the top)
+    col_header_rows = list(range(data_start_row))
+    
+    return {
+        'row_header_cols': row_header_cols,
+        'col_header_rows': col_header_rows,
+        'data_start_row': data_start_row,
+        'data_start_col': data_start_col
+    }
+
+def normalize_pivot_table(df, pivot_structure):
+    """
+    Transform a pivot table into a normalized flat table structure.
+    """
+    # Extract structure components
+    row_header_cols = pivot_structure['row_header_cols']
+    col_header_rows = pivot_structure['col_header_rows']
+    data_start_row = pivot_structure['data_start_row']
+    data_start_col = pivot_structure['data_start_col']
+    
+    # Extract row headers
+    row_headers = df.iloc[data_start_row:, row_header_cols].copy()
+    
+    # Combine multi-level column headers if present
+    if col_header_rows:
+        # Extract header rows
+        header_df = df.iloc[col_header_rows, data_start_col:].copy()
+        
+        # Combine headers into a single level
+        combined_headers = []
+        for j in range(len(header_df.columns)):
+            header_parts = []
+            for i in range(len(header_df)):
+                val = header_df.iloc[i, j]
+                if not pd.isna(val):
+                    header_parts.append(str(val))
+            combined_headers.append(" - ".join(header_parts))
+        
+        # Create new column names
+        new_cols = {}
+        for j, header in enumerate(combined_headers):
+            new_cols[df.columns[j + data_start_col]] = header
+        
+        # Rename data columns
+        df = df.rename(columns=new_cols)
+    
+    # Create normalized table
+    result_rows = []
+    
+    # Iterate through each data row
+    for i in range(data_start_row, len(df)):
+        row_header_values = {}
+        
+        # Extract row header values
+        for idx, col in enumerate(row_header_cols):
+            header_name = f"row_header_{idx+1}"
+            value = df.iloc[i, col]
+            row_header_values[header_name] = value
+        
+        # Extract data cells for this row
+        for j in range(data_start_col, len(df.columns)):
+            if j < len(df.columns):
+                col_header = df.columns[j]
+                value = df.iloc[i, j]
+                
+                if not pd.isna(value):
+                    # Create a normalized row
+                    norm_row = row_header_values.copy()
+                    norm_row["column_header"] = col_header
+                    norm_row["value"] = value
+                    result_rows.append(norm_row)
+    
+    # Convert to dataframe
+    if result_rows:
+        normalized_df = pd.DataFrame(result_rows)
+        return normalized_df
+    else:
+        return pd.DataFrame()
+
 def extract_data(file, business_type="generic"):
     """
     Enhanced extraction engine that:
@@ -685,6 +858,7 @@ def extract_data(file, business_type="generic"):
     2. Improves header and schema detection
     3. Handles various date formats
     4. Provides better data validation and cleaning
+    5. Handles pivot tables with intelligent structure detection
     """
     try:
         xl = pd.ExcelFile(file)
@@ -728,15 +902,38 @@ def extract_data(file, business_type="generic"):
             schema = EXTRACTION_SCHEMAS[sheet_category]
             required_fields = [f for f, s in schema.items() if s["required"]]
             
-            # Identify the most likely header row
-            header_row = identify_header_row(df_sample, required_fields, field_mappings)
+            # Check if this might be a pivot table
+            is_pivot = is_pivot_table(df_sample)
             
-            # Now read the full sheet with the correct header row
-            df = xl.parse(sheet, header=header_row)
+            if is_pivot:
+                # Read the full sheet for pivot processing
+                df = xl.parse(sheet)
+                
+                # Extract pivot structure
+                pivot_structure = extract_pivot_header_structure(df)
+                
+                # Transform pivot to normalized form
+                normalized_df = normalize_pivot_table(df, pivot_structure)
+                
+                # Continue processing with the normalized dataframe
+                if not normalized_df.empty:
+                    df = normalized_df
+                else:
+                    # Failed to normalize, try regular processing
+                    is_pivot = False
+                    header_row = identify_header_row(df_sample, required_fields, field_mappings)
+                    df = xl.parse(sheet, header=header_row)
+            else:
+                # Regular table processing - identify header row
+                header_row = identify_header_row(df_sample, required_fields, field_mappings)
+                
+                # Now read the full sheet with the correct header row
+                df = xl.parse(sheet, header=header_row)
+            
             if df.empty:
                 continue
                 
-            # Ensure unique column names
+            # Ensure unique column names again after full load
             df.columns = ensure_unique_columns(df.columns)
             
             # Detect data types for disambiguation

@@ -13,7 +13,7 @@ def upload_file():
 
     debug_logs = {}
 
-    # Test reading Excel file explicitly
+    # 1) First, try reading the Excel file to confirm it loads
     try:
         xl = pd.ExcelFile(BytesIO(file_bytes))
         debug_logs['sheets'] = xl.sheet_names
@@ -21,28 +21,22 @@ def upload_file():
         debug_logs['excel_read_error'] = str(e)
         return jsonify({"error": "Excel read failed", "debug_logs": debug_logs}), 400
 
-    # Run classification with explicit debugging
+    # 2) Next, classify the file and extract data using your snippet
     try:
         classification_result = classify_file(BytesIO(file_bytes))
+        business_type = classification_result.get("business_type", "generic")
+        
+        # Pass the detected business type into the extraction function
+        extracted_data = extract_data(BytesIO(file_bytes), business_type=business_type)
     except Exception as e:
         classification_result = {
             "is_inventory_planning": False,
             "confidence": 0.0,
             "justification": f"Classifier error: {str(e)}"
         }
-
-    classification_result = {
-        "is_inventory_planning": classification_result.get("is_inventory_planning", False),
-        "confidence": float(classification_result.get("confidence", 0.0)) if classification_result.get("confidence") else 0.0,
-        "justification": classification_result.get("justification", "No justification available.")
-    }
-
-    # Run extraction with explicit debugging
-    try:
-        extracted_data = extract_data(BytesIO(file_bytes))
-    except Exception as e:
         extracted_data = {"error": f"Extraction error: {str(e)}"}
 
+    # 3) Return everything as JSON
     return jsonify({
         "classification": classification_result,
         "extracted_data": extracted_data,
